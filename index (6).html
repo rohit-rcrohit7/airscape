@@ -1,0 +1,869 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Airscape — a living map of the air</title>
+<meta name="description" content="Live air quality, rendered as a living map. Hourly data, 31-day history, 4-day forecast, anywhere on Earth.">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400..600;1,9..144,400..600&family=Space+Grotesk:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#101418; --ink:#E9EDEF; --ink-dim:#8FA0A8;
+    --steel:#6FD6D0; --amber:#E8B84B; --ember:#E1633C; --deep:#B3232A;
+    --panel:rgba(13,17,21,0.88); --line:rgba(143,160,168,0.22);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;background:var(--bg);overflow:hidden;
+    font-family:"Space Grotesk",-apple-system,"Segoe UI",sans-serif;color:var(--ink)}
+  #map{position:fixed;inset:0;background:var(--bg)}
+  #heat{position:fixed;inset:0;pointer-events:none;z-index:440}
+  #air{position:fixed;inset:0;pointer-events:none;z-index:450}
+  .leaflet-container{background:var(--bg);font:inherit}
+  .leaflet-control-attribution{background:rgba(13,17,21,.6)!important;color:var(--ink-dim)!important;font-size:9px!important}
+  .leaflet-control-attribution a{color:var(--steel)!important}
+  .leaflet-control-zoom{display:none}
+
+  header{position:fixed;top:14px;left:16px;z-index:600;pointer-events:none;max-width:44vw}
+  .eyebrow{font-family:"IBM Plex Mono",monospace;font-size:9.5px;letter-spacing:.24em;
+    text-transform:uppercase;color:var(--ink-dim);display:flex;align-items:center;gap:8px}
+  .live-dot{width:7px;height:7px;border-radius:50%;background:var(--steel);
+    box-shadow:0 0 8px var(--steel);animation:pulse 2.4s ease-in-out infinite;flex:none}
+  .live-dot.off{background:var(--amber);box-shadow:0 0 8px var(--amber)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  h1{font-family:"Fraunces",Georgia,serif;font-weight:560;font-size:clamp(20px,3vw,28px);
+    line-height:1.05;margin-top:5px;text-shadow:0 2px 18px rgba(0,0,0,.7)}
+  .city-avg{margin-top:6px;font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink-dim);
+    text-shadow:0 1px 8px rgba(0,0,0,.8);display:flex;align-items:center;flex-wrap:wrap;gap:4px}
+  .city-avg b{color:var(--ink);font-size:17px;font-weight:500}
+  .city-avg .band{padding:2px 8px;border-radius:999px;border:1px solid var(--line);margin-left:4px;
+    font-size:9px;letter-spacing:.08em;text-transform:uppercase;background:var(--panel)}
+
+  .searchbar{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:640;
+    display:flex;gap:6px;align-items:center}
+  .searchwrap{position:relative}
+  .searchbar input{width:min(280px,38vw);background:var(--panel);border:1px solid var(--line);
+    border-radius:999px;padding:8px 15px;color:var(--ink);font-family:"IBM Plex Mono",monospace;
+    font-size:11px;backdrop-filter:blur(10px);outline:none}
+  .searchbar input:focus{border-color:rgba(111,214,208,.55)}
+  .searchbar input::placeholder{color:var(--ink-dim)}
+  .iconbtn{cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--ink);
+    border-radius:999px;width:34px;height:34px;font-size:14px;backdrop-filter:blur(10px);
+    display:flex;align-items:center;justify-content:center;flex:none;transition:all .2s}
+  .iconbtn:hover{border-color:var(--steel);color:var(--steel)}
+  .iconbtn.tracking{color:#0d1115;background:var(--steel);border-color:var(--steel)}
+  .guidebtn{width:auto;padding:0 13px;font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.06em}
+
+  .sugg{position:absolute;top:calc(100% + 6px);left:0;right:0;z-index:660;background:var(--panel);
+    border:1px solid var(--line);border-radius:12px;backdrop-filter:blur(12px);overflow:hidden;display:none}
+  .sugg.show{display:block}
+  .sugg .item{padding:9px 14px;font-size:12px;cursor:pointer;border-bottom:1px solid rgba(143,160,168,.1)}
+  .sugg .item:last-child{border-bottom:none}
+  .sugg .item:hover{background:rgba(111,214,208,.08)}
+  .sugg .item small{display:block;font-family:"IBM Plex Mono",monospace;font-size:9px;color:var(--ink-dim);margin-top:2px}
+
+  .controls{position:fixed;left:16px;bottom:74px;z-index:600;display:flex;flex-direction:column;gap:7px;max-width:320px}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap}
+  .tab{pointer-events:auto;cursor:pointer;border:1px solid var(--line);background:var(--panel);
+    color:var(--ink-dim);border-radius:999px;padding:6px 12px;font-family:"IBM Plex Mono",monospace;
+    font-size:10.5px;backdrop-filter:blur(8px);transition:all .2s}
+  .tab:hover{color:var(--ink)}
+  .tab.on{color:#0d1115;background:var(--steel);border-color:var(--steel);font-weight:500}
+  .chip{pointer-events:auto;cursor:pointer;border:1px solid var(--line);background:var(--panel);
+    color:var(--ink-dim);border-radius:999px;padding:5px 11px;font-family:"IBM Plex Mono",monospace;
+    font-size:10px;backdrop-filter:blur(8px);transition:all .2s}
+  .chip.on{color:var(--steel);border-color:rgba(111,214,208,.55)}
+  .legend{display:flex;align-items:center;gap:8px;font-family:"IBM Plex Mono",monospace;
+    font-size:9.5px;color:var(--ink-dim);text-shadow:0 1px 6px rgba(0,0,0,.8)}
+  .ramp{width:104px;height:5px;border-radius:3px;
+    background:linear-gradient(90deg,#6FD6D0,#E8B84B 45%,#E1633C 75%,#B3232A)}
+
+  .wind{pointer-events:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:9px 11px;backdrop-filter:blur(10px);display:flex;align-items:center;gap:10px;width:fit-content}
+  .wind .compass{width:34px;height:34px;border-radius:50%;border:1px solid var(--line);position:relative;flex:none}
+  .wind .needle{position:absolute;left:50%;top:50%;width:2px;height:13px;background:var(--steel);
+    transform-origin:50% 0;border-radius:2px}
+  .wind .needle::after{content:'';position:absolute;left:-3px;bottom:-2px;width:8px;height:8px;
+    border-radius:50%;background:var(--steel)}
+  .wind .readout{font-family:"IBM Plex Mono",monospace;font-size:11px}
+  .wind .readout small{display:block;font-size:8.5px;color:var(--ink-dim);letter-spacing:.12em;margin-bottom:1px}
+
+  .timebar{position:fixed;left:16px;right:16px;bottom:14px;z-index:600;display:flex;align-items:center;
+    gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:14px;
+    padding:9px 14px;backdrop-filter:blur(10px)}
+  .timebar button{cursor:pointer;border:1px solid var(--line);background:none;color:var(--ink);
+    border-radius:8px;padding:4px 10px;font-family:"IBM Plex Mono",monospace;font-size:11px;flex:none}
+  .timebar button:hover{border-color:var(--steel)}
+  .timebar button.livebtn.on{color:#0d1115;background:var(--steel);border-color:var(--steel)}
+  .timebar input{flex:1;accent-color:var(--steel);min-width:60px}
+  .timebar .when{font-family:"IBM Plex Mono",monospace;font-size:10.5px;color:var(--ink);
+    flex:none;min-width:122px;text-align:right}
+  .timebar .when small{display:block;font-size:8.5px;color:var(--ink-dim);letter-spacing:.1em}
+  .timebar .when small.fc{color:var(--amber)}
+
+  .panel{position:fixed;top:60px;right:14px;width:230px;background:var(--panel);z-index:600;
+    border:1px solid var(--line);border-radius:14px;padding:12px 12px 8px;backdrop-filter:blur(10px)}
+  .panel h2{font-family:"IBM Plex Mono",monospace;font-size:9.5px;letter-spacing:.18em;
+    text-transform:uppercase;color:var(--ink-dim);font-weight:400;margin-bottom:8px;display:flex;justify-content:space-between}
+  .sensor{display:flex;justify-content:space-between;align-items:baseline;padding:5px 6px;
+    border-radius:8px;cursor:pointer;transition:background .2s}
+  .sensor:hover,.sensor.active{background:rgba(111,214,208,0.09)}
+  .sensor .name{font-size:12px}
+  .sensor .val{font-family:"IBM Plex Mono",monospace;font-size:12px}
+  .sensor .trend{font-size:9px;margin-left:3px;opacity:.7}
+  .src{margin-top:7px;padding-top:7px;border-top:1px solid var(--line);
+    font-family:"IBM Plex Mono",monospace;font-size:8.5px;color:var(--ink-dim);line-height:1.6}
+
+  .detail{position:fixed;right:14px;top:0;z-index:600;width:230px;background:var(--panel);
+    border:1px solid var(--line);border-radius:14px;padding:12px;backdrop-filter:blur(10px);display:none}
+  .detail.show{display:block}
+  .detail h3{font-family:"Fraunces",Georgia,serif;font-weight:500;font-size:16px;margin-bottom:2px}
+  .detail .big{font-family:"IBM Plex Mono",monospace;font-size:24px;margin:6px 0 2px}
+  .detail .sub{font-family:"IBM Plex Mono",monospace;font-size:9.5px;color:var(--ink-dim)}
+  .detail canvas{width:100%;height:44px;margin-top:8px;display:block}
+  .detail .close{position:absolute;top:8px;right:11px;cursor:pointer;color:var(--ink-dim);
+    font-size:14px;background:none;border:none;font-family:inherit}
+
+  .probe{position:fixed;z-index:650;pointer-events:none;display:none;transform:translate(-50%,-130%);
+    background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:5px 9px;
+    font-family:"IBM Plex Mono",monospace;font-size:10.5px;backdrop-filter:blur(8px);white-space:nowrap}
+
+  .toast{position:fixed;top:58px;left:50%;transform:translateX(-50%);z-index:700;
+    background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:8px 14px;
+    font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--ink-dim);display:none;
+    max-width:90vw;text-align:center}
+
+  .me{width:14px;height:14px;border-radius:50%;background:var(--steel);
+    border:2.5px solid #0d1115;box-shadow:0 0 0 2px var(--steel),0 0 16px var(--steel)}
+  .me::after{content:'';position:absolute;inset:-9px;border-radius:50%;
+    border:1.5px solid rgba(111,214,208,.5);animation:ring 2s ease-out infinite}
+  @keyframes ring{0%{transform:scale(.5);opacity:1}100%{transform:scale(1.4);opacity:0}}
+
+  /* guide drawer */
+  .guide{position:fixed;top:0;right:0;bottom:0;width:min(400px,100vw);z-index:800;
+    background:#0d1115f5;border-left:1px solid var(--line);transform:translateX(102%);
+    transition:transform .3s cubic-bezier(.2,.8,.2,1);overflow-y:auto;padding:26px 24px 40px;
+    backdrop-filter:blur(14px)}
+  .guide.open{transform:translateX(0)}
+  .guide .gclose{position:sticky;top:0;float:right;cursor:pointer;color:var(--ink-dim);
+    font-size:18px;background:var(--panel);border:1px solid var(--line);border-radius:50%;
+    width:32px;height:32px}
+  .guide .gclose:hover{color:var(--ink)}
+  .guide h2{font-family:"Fraunces",Georgia,serif;font-weight:560;font-size:24px;margin:4px 0 4px}
+  .guide .gsub{font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--ink-dim);
+    letter-spacing:.08em;margin-bottom:20px}
+  .guide h3{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.2em;
+    text-transform:uppercase;color:var(--steel);font-weight:500;margin:24px 0 8px}
+  .guide p{font-size:13px;line-height:1.65;color:#cdd6da;margin-bottom:9px}
+  .guide .pollu{border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin-bottom:10px}
+  .guide .pollu h4{font-family:"IBM Plex Mono",monospace;font-size:12px;font-weight:500;margin-bottom:4px}
+  .guide .pollu p{font-size:12px;margin-bottom:5px}
+  .guide .who{font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--amber);
+    border-top:1px solid var(--line);padding-top:6px;margin-top:6px;line-height:1.6}
+  .guide table{width:100%;border-collapse:collapse;font-family:"IBM Plex Mono",monospace;
+    font-size:10.5px;margin:6px 0 10px}
+  .guide td{padding:5px 8px;border-bottom:1px solid rgba(143,160,168,.12);color:#cdd6da}
+  .guide td:first-child{white-space:nowrap}
+  .guide .sw{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:7px;vertical-align:-1px}
+  .guide .ctrl{display:flex;gap:10px;align-items:baseline;margin-bottom:8px}
+  .guide .ctrl b{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--ink);
+    font-weight:500;flex:none;min-width:78px}
+  .guide .ctrl span{font-size:12px;line-height:1.55;color:#cdd6da}
+  .guide a{color:var(--steel)}
+
+  @media (max-width:640px){
+    .panel{display:none}
+    .detail{width:calc(100% - 28px)}
+    header{max-width:64vw}
+    .searchbar{top:auto;bottom:128px;left:16px;right:16px;transform:none}
+    .searchwrap{flex:1}
+    .searchbar input{width:100%}
+    .sugg{top:auto;bottom:calc(100% + 6px)}
+    .controls{bottom:178px;max-width:calc(100% - 32px)}
+    .timebar .when{min-width:96px}
+  }
+  @media (prefers-reduced-motion:reduce){.live-dot{animation:none}.me::after{animation:none}}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<canvas id="heat"></canvas>
+<canvas id="air"></canvas>
+
+<header>
+  <div class="eyebrow"><span class="live-dot" id="liveDot"></span><span>AIRSCAPE</span><span id="feedTxt" style="letter-spacing:.08em">· connecting</span></div>
+  <h1 id="placeName">Sheffield</h1>
+  <div class="city-avg"><b id="avg">—</b><span id="unit">µg/m³</span><span>area mean</span>
+    <span class="band" id="band">—</span><span class="band" id="eaqi" style="display:none">—</span></div>
+</header>
+
+<div class="searchbar">
+  <div class="searchwrap">
+    <input id="searchIn" type="text" placeholder="city, address or postcode…" autocomplete="off">
+    <div class="sugg" id="sugg"></div>
+  </div>
+  <button class="iconbtn" id="locBtn" title="Use my location">⌖</button>
+  <button class="iconbtn guidebtn" id="guideBtn" title="Guide">guide</button>
+</div>
+
+<div class="panel">
+  <h2><span>Sampling points</span><span id="polLabel">PM2.5</span></h2>
+  <div id="sensors"></div>
+  <div class="src" id="srcNote">connecting…</div>
+</div>
+
+<div class="detail" id="detail">
+  <button class="close" id="detailClose">✕</button>
+  <h3 id="dName">—</h3>
+  <div class="sub" id="dWhere">—</div>
+  <div class="big" id="dVal">—</div>
+  <div class="sub" id="dBand">—</div>
+  <canvas id="spark" width="408" height="88"></canvas>
+  <div class="sub" style="margin-top:5px">previous 48 hours</div>
+</div>
+
+<div class="controls">
+  <div class="wind">
+    <div class="compass"><div class="needle" id="needle"></div></div>
+    <div class="readout"><small>WIND · MOVES THE HAZE</small><span id="windTxt">—</span></div>
+  </div>
+  <div class="tabs" id="polTabs"></div>
+  <div class="tabs">
+    <button class="chip on" data-layer="heatmap">▦ heatmap</button>
+    <button class="chip on" data-layer="haze">∴ haze</button>
+    <button class="chip on" data-layer="roads">— roads</button>
+  </div>
+  <div class="legend"><span>cleaner</span><div class="ramp"></div><span>more polluted</span></div>
+</div>
+
+<div class="timebar">
+  <button id="playBtn" title="Play timeline">▶</button>
+  <input type="range" id="scrub" min="0" max="100" value="100">
+  <div class="when"><small id="whenLabel">—</small><span id="whenTxt">—</span></div>
+  <button class="livebtn on" id="liveBtn">NOW</button>
+</div>
+
+<div class="probe" id="probe"></div>
+<div class="toast" id="toast"></div>
+
+<!-- ============ GUIDE ============ -->
+<div class="guide" id="guide">
+  <button class="gclose" id="guideClose">✕</button>
+  <h2>Airscape</h2>
+  <div class="gsub">A LIVING MAP OF THE AIR · GUIDE</div>
+
+  <h3>What you're looking at</h3>
+  <p>Airscape turns hourly air-quality data into a moving picture of the atmosphere over any place on Earth. Pollution shows as colour and movement: cool teal means cleaner air, shifting through amber to deep red as levels rise.</p>
+  <p>Values come from CAMS, the Copernicus Atmosphere Monitoring Service operated for the EU. It is a scientific model that assimilates satellite and ground observations, sampled here at several points around your chosen location and blended into a continuous surface. Model values can differ from individual street-level monitors, especially right next to a busy road.</p>
+
+  <h3>The layers</h3>
+  <div class="ctrl"><b>▦ heatmap</b><span>A smooth colour surface showing estimated concentration everywhere on screen, including hotspots between sampling points.</span></div>
+  <div class="ctrl"><b>∴ haze</b><span>Drifting particles. Their direction and speed follow the real recorded wind for the hour you are viewing; their density, colour and turbulence follow pollution levels.</span></div>
+  <div class="ctrl"><b>— roads</b><span>Major roads from OpenStreetMap. Motorways and main roads are weighted as emission corridors, which shapes the hotspots — strongly for NO₂, mildly for particles. These weights reflect road class, not live traffic counts.</span></div>
+
+  <h3>The controls</h3>
+  <div class="ctrl"><b>search</b><span>Type a city, street address or postcode. Pick from the suggestions and the map flies there at the closest zoom available, fetching fresh data for that area.</span></div>
+  <div class="ctrl"><b>⌖ locate</b><span>Centres the map on you and keeps a marker tracking your position. Tap again to stop. Your location never leaves your device except to fetch map and air data for the area.</span></div>
+  <div class="ctrl"><b>timeline</b><span>Drag through the past 31 days hour by hour, press ▶ for a timelapse, or jump back to the present with NOW. Beyond the present marker the label turns to FORECAST: up to 4 days ahead.</span></div>
+  <div class="ctrl"><b>hover/tap</b><span>Move over the map to read the estimated value at any exact spot. Tap a sampling point in the side list to see its 48-hour trend.</span></div>
+  <div class="ctrl"><b>wind</b><span>The compass shows the real wind for the hour on the timeline — direction the wind is coming from, and speed. It is what drives the haze across the map.</span></div>
+
+  <h3>Reading the colours</h3>
+  <table>
+    <tr><td><span class="sw" style="background:#6FD6D0"></span>good</td><td>Within or near WHO guideline levels.</td></tr>
+    <tr><td><span class="sw" style="background:#E8B84B"></span>moderate</td><td>Above guidelines; sensitive groups may notice effects.</td></tr>
+    <tr><td><span class="sw" style="background:#E1633C"></span>elevated</td><td>Unhealthy for sensitive groups; consider reducing prolonged outdoor exertion.</td></tr>
+    <tr><td><span class="sw" style="background:#B3232A"></span>poor</td><td>Health effects possible for everyone; sensitive groups should limit time outdoors.</td></tr>
+  </table>
+  <p>In Europe an EAQI badge also appears in the header — the official European Air Quality Index, from good through extremely poor.</p>
+
+  <h3>Pollutants &amp; health</h3>
+  <div class="pollu"><h4>PM2.5 · fine particles</h4>
+    <p>Particles under 2.5 micrometres — combustion smoke, traffic, wood burning. Small enough to pass from the lungs into the bloodstream; linked to heart and lung disease, stroke and reduced life expectancy. The single most health-relevant pollutant.</p>
+    <div class="who">WHO 2021 guideline: 15 µg/m³ (24-h) · 5 µg/m³ (annual)</div></div>
+  <div class="pollu"><h4>PM10 · coarse particles</h4>
+    <p>Particles under 10 micrometres — dust, brake and tyre wear, pollen fragments, construction. Irritates airways and aggravates asthma and bronchitis.</p>
+    <div class="who">WHO 2021 guideline: 45 µg/m³ (24-h) · 15 µg/m³ (annual)</div></div>
+  <div class="pollu"><h4>NO₂ · nitrogen dioxide</h4>
+    <p>Mainly from vehicle exhaust, concentrated along busy roads. Inflames the airways, worsens asthma — children living near major roads are particularly affected.</p>
+    <div class="who">WHO 2021 guideline: 25 µg/m³ (24-h) · 10 µg/m³ (annual)</div></div>
+  <div class="pollu"><h4>O₃ · ozone</h4>
+    <p>Not emitted directly: formed by sunlight acting on other pollutants, so it peaks on hot, still afternoons and is often higher in suburbs than city centres. Causes chest tightness, coughing and reduced lung function during exercise.</p>
+    <div class="who">WHO 2021 guideline: 100 µg/m³ (8-h) · 60 µg/m³ (peak season)</div></div>
+  <div class="pollu"><h4>SO₂ · sulphur dioxide</h4>
+    <p>From burning coal and oil — power generation, shipping, some industry. Irritates the nose, throat and airways; asthmatics are most sensitive.</p>
+    <div class="who">WHO 2021 guideline: 40 µg/m³ (24-h)</div></div>
+  <div class="pollu"><h4>CO · carbon monoxide</h4>
+    <p>From incomplete combustion, mostly traffic. Binds to haemoglobin and reduces the blood's ability to carry oxygen. Outdoor levels are rarely dangerous but track traffic intensity closely.</p>
+    <div class="who">WHO 2021 guideline: 4 mg/m³ (24-h)</div></div>
+  <div class="pollu" id="pollenCard" style="display:none"><h4>Grass pollen</h4>
+    <p>Grains per cubic metre of grass pollen, the main hay-fever trigger in the UK and much of Europe. Seasonal: peaks late May to July in Britain. Available for Europe only.</p>
+    <div class="who">Typical thresholds: low &lt;30 · moderate 30–50 · high 50–150 · very high &gt;150 grains/m³</div></div>
+
+  <h3>Timeline &amp; freshness</h3>
+  <p>The window is live and rolling: each visit loads the most recent 31 days plus a 4-day forecast, and while the page is open the present edge refreshes every 15 minutes. It is never a frozen snapshot. Forecast hours are model predictions and carry more uncertainty the further ahead you look.</p>
+
+  <h3>Data sources</h3>
+  <p>Air quality &amp; forecast: CAMS via the Open-Meteo air-quality API (hourly). Wind: Open-Meteo, real recorded and forecast values. Basemap &amp; roads: OpenStreetMap contributors, dark style by CARTO. Geocoding: Nominatim. In Europe, CAMS additionally provides the EAQI index and pollen, which appear automatically where available.</p>
+  <p>Road emission weighting is an approximation based on road class. Hotspot shapes near roads are indicative, not measured.</p>
+
+  <h3>About</h3>
+  <p>Airscape is created by Rohit Chakraborty.<br>
+  Contact: <a href="mailto:rcrohit7@gmail.com">rcrohit7@gmail.com</a></p>
+  <p style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:var(--ink-dim)">© 2026 Rohit Chakraborty. All rights reserved. Map data © OpenStreetMap contributors · tiles © CARTO · air data © CAMS via Open-Meteo.</p>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+/* ============================================================
+   AIRSCAPE
+   Air quality + forecast: CAMS via Open-Meteo (hourly, no key)
+   Wind: Open-Meteo · Roads: OSM/Overpass · Geocoding: Nominatim
+   ============================================================ */
+
+let CENTER=[53.3885,-1.4520];
+let locSeq=0;
+
+const map=L.map('map',{zoomControl:false}).setView(CENTER,13);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+  attribution:'Airscape by <a href="mailto:rcrohit7@gmail.com">Rohit Chakraborty</a> · © OpenStreetMap contributors © CARTO · air: CAMS/Open-Meteo',
+  subdomains:'abcd',maxZoom:19}).addTo(map);
+
+/* ---------- sampling sites ---------- */
+const SHEFFIELD_SITES=[
+  {id:'tinsley',  name:'Tinsley',          where:'M1 Junction 34 · roadside', lat:53.4112, lng:-1.4032},
+  {id:'wicker',   name:'The Wicker',       where:'Inner city', lat:53.3878, lng:-1.4626},
+  {id:'firshill', name:'Firs Hill',        where:'Residential north', lat:53.3990, lng:-1.4570},
+  {id:'devgreen', name:'Devonshire Green', where:'City centre', lat:53.3792, lng:-1.4778},
+  {id:'lowfield', name:'Lowfield',         where:'London Rd corridor', lat:53.3622, lng:-1.4775},
+  {id:'ecclesall',name:'Ecclesall Rd',     where:'Suburban southwest', lat:53.3672, lng:-1.4946},
+];
+let SENSORS=SHEFFIELD_SITES;
+const BRG=['N','NE','SE','S','SW','NW'];
+function makeSites(lat,lng){
+  const sites=[{id:'centre',name:'Centre',where:'Sample point · centre',lat,lng}];
+  const r=0.020,ls=1/Math.cos(lat*Math.PI/180);
+  BRG.forEach((b,i)=>{const a=i*60*Math.PI/180;
+    sites.push({id:'p'+i,name:b+' · 2.2 km',where:'Sample point · '+b,
+      lat:lat+r*Math.cos(a),lng:lng+r*Math.sin(a)*ls*0.9});});
+  return sites;
+}
+
+/* ---------- pollutants ---------- */
+const POLLUTANTS={
+  pm25:{label:'PM2.5',unit:'µg/m³',api:'pm2_5',dom:[3,30],trafficK:4,avail:true,
+    bands:[[8,'good'],[15,'moderate'],[25,'elevated'],[1e9,'poor']]},
+  pm10:{label:'PM10',unit:'µg/m³',api:'pm10',dom:[5,60],trafficK:5,avail:true,
+    bands:[[20,'good'],[45,'moderate'],[75,'elevated'],[1e9,'poor']]},
+  no2:{label:'NO₂',unit:'µg/m³',api:'nitrogen_dioxide',dom:[5,60],trafficK:14,avail:true,
+    bands:[[15,'good'],[25,'moderate'],[50,'elevated'],[1e9,'poor']]},
+  o3:{label:'O₃',unit:'µg/m³',api:'ozone',dom:[20,110],trafficK:-10,avail:true,
+    bands:[[60,'good'],[100,'moderate'],[140,'elevated'],[1e9,'poor']]},
+  so2:{label:'SO₂',unit:'µg/m³',api:'sulphur_dioxide',dom:[1,45],trafficK:1,avail:true,
+    bands:[[15,'good'],[40,'moderate'],[80,'elevated'],[1e9,'poor']]},
+  co:{label:'CO',unit:'µg/m³',api:'carbon_monoxide',dom:[80,1500],trafficK:90,avail:true,
+    bands:[[600,'good'],[1500,'moderate'],[4000,'elevated'],[1e9,'poor']]},
+  pollen:{label:'Pollen',unit:'gr/m³',api:'grass_pollen',dom:[0,90],trafficK:0,avail:false,
+    bands:[[30,'low'],[50,'moderate'],[150,'high'],[1e9,'very high']]},
+};
+let pol='pm25';
+
+/* ---------- data ---------- */
+const D={ok:false,times:[],sens:{},eaqi:null,wind:{spd:[],dir:[]},n:0,nowIdx:0,offset:0};
+let idx=0,live=true;
+
+function computeNowIdx(){
+  const nowLocal=Date.now()+D.offset*1000;
+  let i=D.n-1;
+  while(i>0&&Date.parse(D.times[i]+':00Z')>nowLocal)i--;
+  D.nowIdx=i;
+}
+async function loadAQ(){
+  const lats=SENSORS.map(s=>s.lat.toFixed(4)).join(','),
+        lngs=SENSORS.map(s=>s.lng.toFixed(4)).join(',');
+  const fields='pm2_5,pm10,nitrogen_dioxide,ozone,sulphur_dioxide,carbon_monoxide,grass_pollen,european_aqi';
+  const u=`https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lats}&longitude=${lngs}`+
+    `&hourly=${fields}&past_days=31&forecast_days=4&timezone=auto`;
+  const r=await fetch(u);if(!r.ok)throw 0;
+  let j=await r.json();if(!Array.isArray(j))j=[j];
+  D.offset=j[0].utc_offset_seconds||0;
+  let n=j[0].hourly.time.length;
+  while(n>0&&j.some(loc=>loc.hourly.pm2_5[n-1]==null))n--;
+  D.times=j[0].hourly.time.slice(0,n);
+  for(const p in POLLUTANTS){
+    D.sens[p]={};
+    SENSORS.forEach((s,i)=>{D.sens[p][s.id]=j[i].hourly[POLLUTANTS[p].api].slice(0,n);});
+    POLLUTANTS[p].avail=D.sens[p][SENSORS[0].id].some(v=>v!=null);
+  }
+  D.eaqi=j[0].hourly.european_aqi?j[0].hourly.european_aqi.slice(0,n):null;
+  if(D.eaqi&&!D.eaqi.some(v=>v!=null))D.eaqi=null;
+  D.n=n;computeNowIdx();
+}
+async function loadWind(){
+  const u=`https://api.open-meteo.com/v1/forecast?latitude=${CENTER[0]}&longitude=${CENTER[1]}`+
+    `&hourly=wind_speed_10m,wind_direction_10m&past_days=31&forecast_days=4`+
+    `&wind_speed_unit=ms&timezone=auto`;
+  const r=await fetch(u);if(!r.ok)throw 0;
+  const j=await r.json();
+  D.wind.spd=j.hourly.wind_speed_10m;D.wind.dir=j.hourly.wind_direction_10m;
+}
+function buildSim(){
+  const n=35*24;
+  D.offset=0;
+  const now=Date.now();
+  D.times=Array.from({length:n},(_,i)=>new Date(now-(31*24-1-i)*3600e3).toISOString().slice(0,16));
+  for(const p in POLLUTANTS){
+    if(p==='pollen'){POLLUTANTS[p].avail=false;continue;}
+    D.sens[p]={};
+    for(const s of SENSORS){
+      const b=POLLUTANTS[p].dom[0]+Math.random()*(POLLUTANTS[p].dom[1]-POLLUTANTS[p].dom[0])*0.4;
+      let v=b;const a=[];
+      for(let i=0;i<n;i++){const h=i%24;
+        const di=(Math.exp(-((h-8.5)**2)/8)+Math.exp(-((h-17.5)**2)/9))*b*0.3;
+        v+=(b-v)*0.1+(Math.random()-0.5)*b*0.15;a.push(Math.max(1,v+di));}
+      D.sens[p][s.id]=a;}
+  }
+  D.eaqi=null;
+  D.wind.spd=Array.from({length:n},(_,i)=>4+3*Math.sin(i*0.05)+Math.random());
+  D.wind.dir=Array.from({length:n},(_,i)=>(225+40*Math.sin(i*0.02))%360);
+  D.n=n;D.nowIdx=31*24-1;
+}
+
+/* ---------- roads ---------- */
+const ROAD_W={motorway:1.0,trunk:0.68,primary:0.42};
+let ROADS=[],SOURCES=[],roadsReady=false;
+async function loadRoads(){
+  const dl=0.062,dg=0.10;
+  const q=`[out:json][timeout:25];(way["highway"~"^(motorway|trunk|primary)$"]`+
+    `(${(CENTER[0]-dl).toFixed(3)},${(CENTER[1]-dg).toFixed(3)},${(CENTER[0]+dl).toFixed(3)},${(CENTER[1]+dg).toFixed(3)}););out geom;`;
+  const r=await fetch('https://overpass-api.de/api/interpreter',{method:'POST',
+    body:'data='+encodeURIComponent(q),headers:{'Content-Type':'application/x-www-form-urlencoded'}});
+  if(!r.ok)throw 0;
+  const j=await r.json();
+  ROADS=[];SOURCES=[];
+  for(const w of j.elements){
+    if(!w.geometry||w.geometry.length<2)continue;
+    const weight=ROAD_W[w.tags.highway]||0.3;
+    const pts=w.geometry.map(g=>[g.lat,g.lon]);
+    ROADS.push({w:weight,pts});
+    let acc=0;SOURCES.push({lat:pts[0][0],lng:pts[0][1],w:weight});
+    for(let i=1;i<pts.length;i++){
+      acc+=Math.hypot(pts[i][0]-pts[i-1][0],(pts[i][1]-pts[i-1][1])*0.6);
+      if(acc>0.0016){SOURCES.push({lat:pts[i][0],lng:pts[i][1],w:weight});acc=0;}
+    }
+  }
+  if(SOURCES.length>900){const k=Math.ceil(SOURCES.length/900);SOURCES=SOURCES.filter((_,i)=>i%k===0);}
+  roadsReady=true;
+}
+
+/* ---------- relocate ---------- */
+const toast=m=>{const t=document.getElementById('toast');t.textContent=m;t.style.display='block';
+  clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',6000);};
+
+async function relocate(lat,lng,label,isSheffield,bounds){
+  const seq=++locSeq;
+  stopPlay();
+  CENTER=[lat,lng];
+  SENSORS=isSheffield?SHEFFIELD_SITES:makeSites(lat,lng);
+  selected=null;roadsReady=false;ROADS=[];SOURCES=[];
+  D.ok=false;D.n=0;grid=null;trafficGrid=null;
+  document.getElementById('placeName').textContent=label;
+  document.getElementById('feedTxt').textContent='· connecting';
+  document.getElementById('srcNote').textContent='connecting…';
+  if(bounds){map.fitBounds(bounds,{maxZoom:17});}
+  else map.setView([lat,lng],13);
+  const res=await Promise.allSettled([loadAQ(),loadWind(),loadRoads()]);
+  if(seq!==locSeq)return;
+  const[aq,wd,rd]=res.map(r=>r.status==='fulfilled');
+  if(aq){D.ok=true;
+    document.getElementById('liveDot').classList.remove('off');
+    document.getElementById('feedTxt').textContent='· live';
+    document.getElementById('srcNote').textContent=
+      'CAMS model, hourly · rolling 31 days + 4-day forecast · refreshes every 15 min'+
+      (rd?' · roads: OpenStreetMap':'');
+  }else{
+    buildSim();
+    document.getElementById('liveDot').classList.add('off');
+    document.getElementById('feedTxt').textContent='· offline demo';
+    document.getElementById('srcNote').textContent=
+      'Data services unreachable — demo values shown. Open this file in a normal browser tab for live data.';
+    toast('Data services unreachable here. Demo values shown.');
+  }
+  if(!wd&&aq){D.wind.spd=Array(D.n).fill(5);D.wind.dir=Array(D.n).fill(225);}
+  if(!POLLUTANTS[pol].avail)pol='pm25';
+  renderTabs();
+  idx=D.nowIdx;live=true;
+  setupScrub();applyWind();updatePanel();updateDetail();
+  document.getElementById('pollenCard').style.display=POLLUTANTS.pollen.avail?'block':'none';
+  trafficDirty=true;heatDirty=true;
+}
+
+/* ---------- search with suggestions (city / address / postcode) ---------- */
+const sIn=document.getElementById('searchIn'),sugg=document.getElementById('sugg');
+let suggT=null;
+sIn.addEventListener('input',()=>{
+  clearTimeout(suggT);
+  const q=sIn.value.trim();
+  if(q.length<3){sugg.classList.remove('show');return;}
+  suggT=setTimeout(()=>fetchSugg(q),420);
+});
+sIn.addEventListener('keydown',e=>{
+  if(e.key==='Enter'){const first=sugg.querySelector('.item');
+    if(first)first.click();else fetchSugg(sIn.value.trim());}
+  if(e.key==='Escape')sugg.classList.remove('show');
+});
+document.addEventListener('click',e=>{
+  if(!e.target.closest('.searchwrap'))sugg.classList.remove('show');});
+async function fetchSugg(q){
+  try{
+    const r=await fetch('https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=6&q='+
+      encodeURIComponent(q));
+    const j=await r.json();
+    if(!j.length){sugg.innerHTML='<div class="item"><small>no matches</small></div>';
+      sugg.classList.add('show');return;}
+    sugg.innerHTML=j.map((h,i)=>{
+      const parts=h.display_name.split(',');
+      return `<div class="item" data-i="${i}">${parts[0]}<small>${parts.slice(1,4).join(',').trim()}</small></div>`;
+    }).join('');
+    sugg.classList.add('show');
+    sugg.querySelectorAll('.item').forEach(el=>el.addEventListener('click',()=>{
+      const h=j[+el.dataset.i];if(!h)return;
+      sugg.classList.remove('show');
+      sIn.value=h.display_name.split(',')[0];
+      const bb=h.boundingbox?[[+h.boundingbox[0],+h.boundingbox[2]],[+h.boundingbox[1],+h.boundingbox[3]]]:null;
+      relocate(+h.lat,+h.lon,h.display_name.split(',')[0],false,bb);
+    }));
+  }catch(e){toast('Search unavailable.');}
+}
+
+/* ---------- locate me, live-tracked ---------- */
+let meMarker=null,watchId=null;
+document.getElementById('locBtn').addEventListener('click',()=>{
+  const btn=document.getElementById('locBtn');
+  if(watchId!==null){
+    navigator.geolocation.clearWatch(watchId);watchId=null;
+    btn.classList.remove('tracking');
+    if(meMarker){map.removeLayer(meMarker);meMarker=null;}
+    return;
+  }
+  if(!navigator.geolocation){toast('Location not supported by this browser.');return;}
+  btn.classList.add('tracking');
+  navigator.geolocation.getCurrentPosition(p=>{
+    const{latitude:lat,longitude:lng}=p.coords;
+    relocate(lat,lng,'Your location',false);
+    meMarker=L.marker([lat,lng],{icon:L.divIcon({className:'',html:'<div class="me"></div>',
+      iconSize:[14,14],iconAnchor:[7,7]})}).addTo(map);
+    watchId=navigator.geolocation.watchPosition(p2=>{
+      if(meMarker)meMarker.setLatLng([p2.coords.latitude,p2.coords.longitude]);
+    },null,{enableHighAccuracy:true});
+  },err=>{
+    btn.classList.remove('tracking');
+    toast(err.code===1?'Location permission denied.':'Could not get your location.');
+  },{enableHighAccuracy:true,timeout:12000});
+});
+
+/* ---------- guide ---------- */
+document.getElementById('guideBtn').addEventListener('click',()=>
+  document.getElementById('guide').classList.add('open'));
+document.getElementById('guideClose').addEventListener('click',()=>
+  document.getElementById('guide').classList.remove('open'));
+
+/* ---------- accessors ---------- */
+const val=(p,sid,i=idx)=>{const a=D.sens[p]&&D.sens[p][sid];
+  return a?(a[Math.min(i,D.n-1)]??0):0;};
+const prevVal=(p,sid)=>val(p,sid,Math.max(0,idx-1));
+function rushFactor(i){if(!D.times[i])return 1;
+  const h=+D.times[i].slice(11,13)+(+D.times[i].slice(14,16))/60;
+  return 0.45+0.55*Math.min(1,Math.exp(-((h-8.5)**2)/4.5)+Math.exp(-((h-17.5)**2)/5));}
+
+/* ---------- field ---------- */
+function gauss(d2,s2){return Math.exp(-d2/(2*s2));}
+const SIG2=0.0028*0.0028;
+function trafficAt(lat,lng){let t=0;
+  for(const s of SOURCES){
+    const dx=(lng-s.lng)*0.6,dy=lat-s.lat,d2=dx*dx+dy*dy;
+    if(d2<SIG2*14)t+=s.w*gauss(d2,SIG2);}
+  return Math.min(t,2.4);}
+function fieldAt(lat,lng){
+  let num=0,den=0;
+  for(const s of SENSORS){
+    const dx=(lng-s.lng)*0.6,dy=lat-s.lat,d2=dx*dx+dy*dy+1e-6;
+    const w=1/(d2*d2);num+=w*val(pol,s.id);den+=w;}
+  let v=num/den;
+  const K=POLLUTANTS[pol].trafficK;
+  if(K&&roadsReady)v+=K*trafficAt(lat,lng)*rushFactor(idx);
+  return Math.max(POLLUTANTS[pol].dom[0]*0.4,v);}
+
+function lerp(a,b,t){return a+(b-a)*t}
+const RAMPC=[[111,214,208],[232,184,75],[225,99,60],[179,35,42]];
+function norm(v){const lo=POLLUTANTS[pol].dom[0],hi=POLLUTANTS[pol].dom[1];
+  return Math.max(0,Math.min(1,(v-lo)/(hi-lo)));}
+function rampColor(v){const t=norm(v),seg=t*3,i=Math.min(2,seg|0),f=seg-i;
+  const a=RAMPC[i],b=RAMPC[i+1];
+  return[lerp(a[0],b[0],f),lerp(a[1],b[1],f),lerp(a[2],b[2],f)];}
+function bandName(v){for(const e of POLLUTANTS[pol].bands)if(v<e[0])return e[1];return'poor';}
+const EAQI_BANDS=[[20,'good'],[40,'fair'],[60,'moderate'],[80,'poor'],[100,'very poor'],[1e9,'ext. poor']];
+function eaqiBand(v){for(const e of EAQI_BANDS)if(v<=e[0])return e[1];return'ext. poor';}
+
+/* ---------- render ---------- */
+const air=document.getElementById('air'),actx=air.getContext('2d');
+const heat=document.getElementById('heat'),hctx=heat.getContext('2d');
+const heatLow=document.createElement('canvas'),lctx=heatLow.getContext('2d');
+let W,H,DPR,GW,GH,heatDirty=true,trafficGrid=null,trafficDirty=true,grid=null;
+function resize(){DPR=Math.min(devicePixelRatio||1,2);
+  W=air.width=heat.width=innerWidth*DPR;H=air.height=heat.height=innerHeight*DPR;
+  air.style.width=heat.style.width=innerWidth+'px';
+  air.style.height=heat.style.height=innerHeight+'px';
+  GW=Math.ceil(innerWidth/12);GH=Math.ceil(innerHeight/12);
+  heatLow.width=GW;heatLow.height=GH;heatDirty=trafficDirty=true;}
+resize();addEventListener('resize',resize);
+const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const layers={heatmap:true,haze:true,roads:true};
+document.querySelectorAll('.chip').forEach(c=>c.addEventListener('click',()=>{
+  layers[c.dataset.layer]=!layers[c.dataset.layer];c.classList.toggle('on');heatDirty=true;}));
+
+function renderHeat(){
+  if(trafficDirty&&roadsReady){
+    trafficGrid=new Float32Array(GW*GH);
+    for(let gy=0;gy<GH;gy++)for(let gx=0;gx<GW;gx++){
+      const ll=map.containerPointToLatLng([(gx+0.5)*12,(gy+0.5)*12]);
+      trafficGrid[gy*GW+gx]=trafficAt(ll.lat,ll.lng);}
+    trafficDirty=false;}
+  grid=new Float32Array(GW*GH);
+  const img=lctx.createImageData(GW,GH);
+  const K=POLLUTANTS[pol].trafficK,rf=D.n?rushFactor(idx):1;
+  for(let gy=0;gy<GH;gy++)for(let gx=0;gx<GW;gx++){
+    const ll=map.containerPointToLatLng([(gx+0.5)*12,(gy+0.5)*12]);
+    let num=0,den=0;
+    for(const s of SENSORS){
+      const dx=(ll.lng-s.lng)*0.6,dy=ll.lat-s.lat,d2=dx*dx+dy*dy+1e-6;
+      const w=1/(d2*d2);num+=w*val(pol,s.id);den+=w;}
+    let v=num/den;
+    if(K&&trafficGrid&&roadsReady)v+=K*trafficGrid[gy*GW+gx]*rf;
+    v=Math.max(POLLUTANTS[pol].dom[0]*0.4,v);
+    grid[gy*GW+gx]=v;
+    const t=norm(v),c=rampColor(v),k=(gy*GW+gx)*4;
+    img.data[k]=c[0];img.data[k+1]=c[1];img.data[k+2]=c[2];
+    img.data[k+3]=layers.heatmap?Math.pow(t,1.25)*150:0;}
+  lctx.putImageData(img,0,0);
+  hctx.clearRect(0,0,W,H);
+  if(layers.heatmap){hctx.save();hctx.filter='blur('+(7*DPR)+'px)';
+    hctx.drawImage(heatLow,0,0,W,H);hctx.restore();}
+  if(layers.roads){hctx.lineCap='round';
+    for(const r of ROADS){hctx.beginPath();
+      r.pts.forEach((p,i)=>{const pt=map.latLngToContainerPoint(p);
+        i?hctx.lineTo(pt.x*DPR,pt.y*DPR):hctx.moveTo(pt.x*DPR,pt.y*DPR);});
+      hctx.strokeStyle=`rgba(225,99,60,${0.08+r.w*0.15})`;
+      hctx.lineWidth=(0.8+r.w*2.2)*DPR;hctx.stroke();}}
+  heatDirty=false;
+}
+function gridSample(x,y){if(!grid)return null;
+  const gx=Math.min(GW-1.001,Math.max(0,x/12-0.5)),gy=Math.min(GH-1.001,Math.max(0,y/12-0.5));
+  const x0=gx|0,y0=gy|0,fx=gx-x0,fy=gy-y0;
+  const a=grid[y0*GW+x0],b=grid[y0*GW+x0+1]??a,c=grid[(y0+1)*GW+x0]??a,d=grid[(y0+1)*GW+x0+1]??a;
+  return lerp(lerp(a,b,fx),lerp(c,d,fx),fy);}
+let moveT=null;
+map.on('move zoom',()=>{if(moveT)return;moveT=setTimeout(()=>{moveT=null;trafficDirty=true;heatDirty=true;},140);});
+
+/* ---------- wind (always real, follows the timeline) ---------- */
+const wind={dir:225,spd:5};
+const CARD=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+function applyWind(){if(!D.wind.spd.length)return;
+  const i=Math.min(idx,D.wind.spd.length-1);
+  wind.spd=Math.round((D.wind.spd[i]??5)*10)/10;wind.dir=D.wind.dir[i]??225;
+  document.getElementById('windTxt').textContent=
+    `${CARD[Math.round(wind.dir/22.5)%16]} · ${wind.spd} m/s`;
+  document.getElementById('needle').style.transform=
+    `translate(-50%,0) rotate(${(wind.dir+180)%360}deg)`;}
+
+/* ---------- particles ---------- */
+const parts=[];const MAXP=1300;
+function padB(b){const dy=(b.getNorth()-b.getSouth())*0.2,dx=(b.getEast()-b.getWest())*0.2;
+  return{s:b.getSouth()-dy,n:b.getNorth()+dy,w:b.getWest()-dx,e:b.getEast()+dx};}
+function spawn(p){const b=padB(map.getBounds());
+  p.lat=b.s+Math.random()*(b.n-b.s);p.lng=b.w+Math.random()*(b.e-b.w);
+  p.life=140+Math.random()*260;}
+for(let i=0;i<MAXP;i++){const p={};spawn(p);p.life*=Math.random();parts.push(p);}
+
+let selected=null,last=performance.now();
+function frame(now){
+  const dt=Math.min(50,now-last);last=now;
+  if(heatDirty&&D.n)renderHeat();
+  actx.clearRect(0,0,W,H);
+  if(layers.haze&&D.n){
+    const toRad=((wind.dir+180)%360)*Math.PI/180;
+    const ux=Math.sin(toRad),uy=Math.cos(toRad);
+    const slow=reduceMotion?0.25:1;
+    const b=padB(map.getBounds());
+    const base=wind.spd*5.4e-7*dt*slow;
+    for(const p of parts){
+      const pt=map.latLngToContainerPoint([p.lat,p.lng]);
+      const v=gridSample(pt.x,pt.y)??POLLUTANTS[pol].dom[0];
+      const t=norm(v);
+      const turb=(Math.random()-0.5)*t*2.0;
+      const ca=Math.cos(turb),sa=Math.sin(turb);
+      const ex=ux*ca-uy*sa,ny=ux*sa+uy*ca;
+      const sp=base*(0.5+t*1.3)+9e-8*dt;
+      p.lng+=ex*sp*1.7;p.lat+=ny*sp;p.life-=dt*0.06;
+      if(p.life<=0||p.lat<b.s||p.lat>b.n||p.lng<b.w||p.lng>b.e){spawn(p);continue;}
+      if(pt.x<-10||pt.x>innerWidth+10||pt.y<-10||pt.y>innerHeight+10)continue;
+      const c=rampColor(v);
+      actx.fillStyle=`rgba(${c[0]|0},${c[1]|0},${c[2]|0},${0.16+t*0.5})`;
+      actx.fillRect(pt.x*DPR,pt.y*DPR,(0.9+t*2.0)*DPR,(0.9+t*2.0)*DPR);
+    }
+  }
+  // selected sampling point: a single subtle marker
+  if(selected&&D.n){
+    const s=SENSORS.find(x=>x.id===selected);
+    if(s){
+      const v=val(pol,s.id),c=rampColor(v);
+      const pt=map.latLngToContainerPoint([s.lat,s.lng]);
+      const X=pt.x*DPR,Y=pt.y*DPR;
+      actx.beginPath();actx.arc(X,Y,4*DPR,0,7);
+      actx.fillStyle=`rgb(${c[0]|0},${c[1]|0},${c[2]|0})`;actx.fill();
+      actx.beginPath();actx.arc(X,Y,9*DPR,0,7);
+      actx.strokeStyle=`rgba(${c[0]|0},${c[1]|0},${c[2]|0},0.6)`;
+      actx.lineWidth=1.2*DPR;actx.stroke();
+    }
+  }
+  requestAnimationFrame(frame);
+}
+
+/* ---------- timeline ---------- */
+const scrub=document.getElementById('scrub');
+function setupScrub(){scrub.max=Math.max(1,D.n-1);scrub.value=idx;updateWhen();}
+function setIdx(i,toNow){
+  idx=Math.max(0,Math.min(D.n-1,i));
+  if(toNow===true)idx=D.nowIdx;
+  live=idx===D.nowIdx;
+  document.getElementById('liveBtn').classList.toggle('on',live);
+  scrub.value=idx;updateWhen();applyWind();
+  heatDirty=true;updatePanel();updateDetail();}
+function updateWhen(){
+  if(!D.n)return;
+  const t=D.times[idx];
+  const d=new Date(t.length<=16?t+':00':t);
+  document.getElementById('whenTxt').textContent=
+    d.toLocaleDateString('en-GB',{day:'numeric',month:'short'})+' · '+t.slice(11,16);
+  const lab=document.getElementById('whenLabel');
+  if(idx>D.nowIdx){lab.textContent='FORECAST';lab.classList.add('fc');}
+  else{lab.textContent=live?'NOW':'ARCHIVE';lab.classList.remove('fc');}}
+scrub.addEventListener('input',()=>setIdx(+scrub.value));
+document.getElementById('liveBtn').addEventListener('click',()=>setIdx(D.nowIdx,true));
+let playing=false,playT=null;
+function stopPlay(){if(playing){playing=false;clearInterval(playT);
+  document.getElementById('playBtn').textContent='▶';}}
+document.getElementById('playBtn').addEventListener('click',e=>{
+  playing=!playing;e.target.textContent=playing?'⏸':'▶';
+  if(playing){if(idx>=D.n-1)setIdx(0);
+    playT=setInterval(()=>{if(idx>=D.n-1){stopPlay();return;}setIdx(idx+2);},130);}
+  else clearInterval(playT);});
+
+/* ---------- tabs (built from availability) ---------- */
+function renderTabs(){
+  const box=document.getElementById('polTabs');
+  box.innerHTML=Object.keys(POLLUTANTS).filter(p=>POLLUTANTS[p].avail)
+    .map(p=>`<button class="tab ${p===pol?'on':''}" data-pol="${p}">${POLLUTANTS[p].label}</button>`).join('');
+  box.querySelectorAll('.tab').forEach(b=>b.addEventListener('click',()=>{
+    box.querySelectorAll('.tab').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');pol=b.dataset.pol;
+    document.getElementById('polLabel').textContent=POLLUTANTS[pol].label;
+    document.getElementById('unit').textContent=POLLUTANTS[pol].unit;
+    heatDirty=true;updatePanel();updateDetail();}));
+}
+
+/* ---------- interactions ---------- */
+map.on('click',e=>{
+  const pt=e.containerPoint;let hit=null;
+  for(const s of SENSORS){const sp=map.latLngToContainerPoint([s.lat,s.lng]);
+    if(Math.hypot(sp.x-pt.x,sp.y-pt.y)<26){hit=s.id;break;}}
+  if(hit){selected=hit===selected?null:hit;updatePanel();updateDetail();}});
+const probe=document.getElementById('probe');
+map.on('mousemove',e=>{
+  if(!D.n)return;
+  const v=fieldAt(e.latlng.lat,e.latlng.lng),c=rampColor(v);
+  probe.style.display='block';
+  probe.style.left=e.containerPoint.x+'px';probe.style.top=e.containerPoint.y+'px';
+  probe.innerHTML=`<span style="color:rgb(${c[0]|0},${c[1]|0},${c[2]|0})">${v.toFixed(1)}</span> ${POLLUTANTS[pol].unit} · ${bandName(v)}`;});
+map.on('mouseout',()=>probe.style.display='none');
+map.on('dragstart',()=>probe.style.display='none');
+
+const panelEl=document.getElementById('sensors');
+function updatePanel(){
+  if(!D.n)return;let sum=0;
+  panelEl.innerHTML=SENSORS.map(s=>{
+    const v=val(pol,s.id);sum+=v;
+    const c=rampColor(v),d=v-prevVal(pol,s.id);
+    const arrow=Math.abs(d)<0.2?'·':d>0?'▲':'▼';
+    return `<div class="sensor ${selected===s.id?'active':''}" data-id="${s.id}">
+      <span class="name">${s.name}</span>
+      <span class="val" style="color:rgb(${c[0]|0},${c[1]|0},${c[2]|0})">${v.toFixed(1)}<span class="trend">${arrow}</span></span></div>`;}).join('');
+  const avg=sum/SENSORS.length;
+  document.getElementById('avg').textContent=avg.toFixed(1);
+  const band=document.getElementById('band'),bc=rampColor(avg);
+  band.textContent=bandName(avg);
+  band.style.color=`rgb(${bc[0]|0},${bc[1]|0},${bc[2]|0})`;
+  band.style.borderColor=`rgba(${bc[0]|0},${bc[1]|0},${bc[2]|0},0.5)`;
+  const eq=document.getElementById('eaqi');
+  if(D.eaqi){const ev=D.eaqi[Math.min(idx,D.eaqi.length-1)];
+    if(ev!=null){eq.style.display='inline-block';eq.textContent='EAQI '+Math.round(ev)+' · '+eaqiBand(ev);}
+    else eq.style.display='none';}
+  else eq.style.display='none';}
+panelEl.addEventListener('click',e=>{
+  const el=e.target.closest('.sensor');if(!el)return;
+  selected=selected===el.dataset.id?null:el.dataset.id;
+  updatePanel();updateDetail();
+  const s=SENSORS.find(x=>x.id===selected);
+  if(s)map.panTo([s.lat,s.lng]);});
+
+const detail=document.getElementById('detail');
+document.getElementById('detailClose').addEventListener('click',()=>{selected=null;updatePanel();updateDetail();});
+function updateDetail(){
+  const pn=document.querySelector('.panel');
+  detail.style.top=(60+(pn.offsetHeight||0)+10)+'px';
+  if(!selected||!D.n){detail.classList.remove('show');return;}
+  const s=SENSORS.find(x=>x.id===selected);
+  if(!s){detail.classList.remove('show');return;}
+  const v=val(pol,s.id),c=rampColor(v);
+  detail.classList.add('show');
+  document.getElementById('dName').textContent=s.name;
+  document.getElementById('dWhere').textContent=s.where;
+  document.getElementById('dVal').textContent=v.toFixed(1)+' '+POLLUTANTS[pol].unit;
+  document.getElementById('dVal').style.color=`rgb(${c[0]|0},${c[1]|0},${c[2]|0})`;
+  document.getElementById('dBand').textContent=POLLUTANTS[pol].label+' · '+bandName(v);
+  const arr=D.sens[pol][s.id].map(x=>x??0);
+  drawSpark(arr.slice(Math.max(0,idx-47),idx+1));}
+function drawSpark(h){
+  const cv=document.getElementById('spark'),g=cv.getContext('2d');
+  g.clearRect(0,0,cv.width,cv.height);
+  if(h.length<2)return;
+  const lo=Math.min(...h)*0.96,hi=Math.max(...h)*1.04;
+  g.beginPath();
+  h.forEach((v,i)=>{const x=i/(h.length-1)*cv.width,
+    y=cv.height-((v-lo)/(hi-lo||1))*(cv.height-10)-5;
+    i?g.lineTo(x,y):g.moveTo(x,y);});
+  const c=rampColor(h[h.length-1]);
+  g.strokeStyle=`rgb(${c[0]|0},${c[1]|0},${c[2]|0})`;
+  g.lineWidth=2.5;g.lineJoin='round';g.stroke();
+  g.lineTo(cv.width,cv.height);g.lineTo(0,cv.height);g.closePath();
+  g.fillStyle=`rgba(${c[0]|0},${c[1]|0},${c[2]|0},0.12)`;g.fill();}
+
+/* ---------- boot + 15-minute rolling refresh ---------- */
+renderTabs();
+relocate(CENTER[0],CENTER[1],'Sheffield',true);
+setInterval(async()=>{
+  if(!D.ok)return;
+  const seq=locSeq;
+  try{await loadAQ();await loadWind();
+    if(seq!==locSeq)return;
+    if(live)idx=D.nowIdx;
+    setupScrub();applyWind();updatePanel();updateDetail();heatDirty=true;
+  }catch(e){}
+},9e5);
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
