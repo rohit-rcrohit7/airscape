@@ -4,7 +4,7 @@
 
 Airscape turns hourly air-quality data into a moving picture of the atmosphere over any place on Earth. Pollution appears as colour and motion: cool teal for cleaner air, shifting through amber to deep red as levels rise. Haze drifts across the map with the real wind, hotspots glow along major roads, and a timeline lets you replay the past month or look four days ahead.
 
-**Live site:** https://YOUR-USERNAME.github.io/airscape/
+**Live site:** https://rohit-rcrohit7.github.io/airscape/
 
 ## Features
 
@@ -54,19 +54,13 @@ Airscape is a single self-contained HTML file — no build step, no backend, no 
 | EAQI | CAMS via Open-Meteo |
 | DAQI | Computed in-app from Defra/COMEAP concentration bands |
 
-## Honest limitations
+## limitations
 
-- Air-quality values are **model estimates** (CAMS), not physical sensor readings, and can differ from street-level monitors, especially beside busy roads.
+- Air-quality values are **model estimates** (CAMS), not physical sensor readings, and can differ from street-level monitors, especially beside busy roads. I will be working to add stationary monitors data.
 - The DAQI shown is computed from **current hourly values** as a proxy for the official averaging periods (24-hour particles, 8-hour ozone), so it reacts faster than the official figure.
 - Road-class emission weighting is an approximation; the noise-derived weighting (England) tracks traffic better but is still indicative, not measured air.
-- The Defra noise map is a **long-term annual model**, not live sound.
+- The Defra noise map road overlay is a **long-term annual model**, not live noise.
 - Forecast hours carry more uncertainty the further ahead you look.
-
-## Running and deploying
-
-- **Locally:** download `index.html` and open it in any modern browser.
-- **GitHub Pages:** upload `index.html` and this `README.md` to a public repository, then Settings → Pages → deploy from branch `main`, folder `/ (root)`. The ⌖ location feature requires a secure context (https), which Pages provides.
-- **Updating:** upload a new `index.html` over the old one; Pages redeploys automatically in about a minute.
 
 ## Contact
 
