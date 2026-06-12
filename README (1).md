@@ -4,7 +4,7 @@
 
 Airscape turns hourly air-quality data into a moving picture of the atmosphere over any place on Earth. Pollution appears as colour and motion: cool teal for cleaner air, shifting through amber to deep red as levels rise. Haze drifts across the map with the real wind, hotspots glow along major roads, and a timeline lets you replay the past month or look four days ahead.
 
-**Live site:** https://YOUR-USERNAME.github.io/airscape/
+**Live site:** https://rohit-rcrohit7.github.io/airscape/
 
 ## Features
 
