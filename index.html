@@ -151,6 +151,15 @@
     font-family:"IBM Plex Mono",monospace;font-size:9px;color:var(--ink-dim);line-height:1.65}
   .info .foot a{color:var(--steel);cursor:pointer;text-decoration:none}
   .info .foot a:hover{text-decoration:underline}
+  .info .stat{margin-top:11px;font-family:"IBM Plex Mono",monospace;font-size:10px;line-height:1.55;
+    color:var(--ink-dim);background:rgba(255,255,255,.03);border:1px solid var(--line);
+    border-radius:9px;padding:7px 9px}
+  .info .stat b{color:var(--ink);font-weight:500}
+  .info .acts{display:flex;gap:6px;margin-top:11px}
+  .info .acts button{flex:1;font-family:"IBM Plex Mono",monospace;font-size:10px;cursor:pointer;
+    padding:6px 8px;border-radius:9px;border:1px solid var(--line);color:var(--ink-dim);
+    background:rgba(255,255,255,.02);transition:all .2s}
+  .info .acts button:hover{color:var(--ink);border-color:var(--steel)}
 
   .probe{position:fixed;z-index:650;pointer-events:none;display:none;transform:translate(-50%,-130%);
     background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:5px 9px;
@@ -249,11 +258,14 @@
 
   <canvas id="iSpark"></canvas>
   <div class="axis"><span id="iAxL">—</span><span id="iAxNow" class="fc"></span><span id="iAxR">—</span></div>
+  <div class="stat" id="iStat" style="display:none"></div>
 
   <div class="seph">all pollutants here</div>
   <div class="grid" id="iGrid"></div>
 
   <div class="noise" id="iNoise" style="display:none">♪ road noise <span class="nv">—</span></div>
+
+  <div class="acts"><button id="iCsv">⤓ CSV</button><button id="iLink">🔗 copy link</button></div>
 
   <div class="foot" id="iFoot">Estimated from the CAMS model — not a sensor reading. <a data-guide="g-about">What am I seeing?</a></div>
 </div>
@@ -306,7 +318,7 @@
   <div class="ctrl"><b>⌖ locate</b><span>Centres the map on you and keeps a marker tracking your position. Tap again to stop. Your location never leaves your device except to fetch map and air data for the area.</span></div>
   <div class="ctrl"><b>timeline</b><span>Drag through the past 31 days hour by hour, press ▶ for a timelapse, or jump back to the present with NOW. Beyond the present marker the label turns to FORECAST: up to 4 days ahead.</span></div>
   <div class="ctrl"><b>hover</b><span>Move over the map for a quick floating readout of the estimated value at any exact spot.</span></div>
-  <div class="ctrl"><b>tap / click</b><span>Click anywhere to pin that spot and open a full readout: the place name, every pollutant, the local index, and a trend graph spanning the last 48 hours into the forecast. Tap a pollutant in the panel to switch the map to it, or the underlined labels to jump here in the guide.</span></div>
+  <div class="ctrl"><b>tap / click</b><span>Click anywhere to pin that spot and open a full readout: the place name, every pollutant, the local index, a 48-hour trend running into the forecast, and an <em>exposure summary</em> — how many of the past ~31 days' hours exceeded the WHO guideline at that point, plus the peak and when it occurred. Use <b>⤓ CSV</b> to download the full hourly series for the point, or <b>🔗 copy link</b> to share the exact view — the pin, pollutant and hour are encoded in the address, which always reflects what you're looking at. Tap a pollutant to switch the map; tap the underlined labels to jump here in the guide.</span></div>
   <div class="ctrl"><b>wind</b><span>The compass shows the real wind for the hour on the timeline — direction the wind is coming from, and speed. It is what drives the haze across the map.</span></div>
 
   <h3 id="g-colours">Reading the colours</h3>
@@ -437,6 +449,7 @@ let pol='pm25';
 const D={ok:false,times:[],sens:{},eaqi:null,wind:{spd:[],dir:[]},n:0,nowIdx:0,offset:0};
 let idx=0,live=true;
 let clickPt=null,feedNote='',trafficNote='road class';
+let pendingState=null,hashReady=false;
 
 function computeNowIdx(){
   const nowLocal=Date.now()+D.offset*1000;
@@ -528,7 +541,7 @@ async function loadRoads(){
 const toast=m=>{const t=document.getElementById('toast');t.textContent=m;t.style.display='block';
   clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',6000);};
 
-async function relocate(lat,lng,label,isSheffield,bounds){
+async function relocate(lat,lng,label,isSheffield,bounds,zoom){
   const seq=++locSeq;
   stopPlay();
   CENTER=[lat,lng];
@@ -538,7 +551,7 @@ async function relocate(lat,lng,label,isSheffield,bounds){
   document.getElementById('placeName').textContent=label;
   document.getElementById('feedTxt').textContent='· connecting';
   if(bounds){map.fitBounds(bounds,{maxZoom:17});}
-  else map.setView([lat,lng],13);
+  else map.setView([lat,lng],zoom||13);
   const res=await Promise.allSettled([loadAQ(),loadWind(),loadRoads()]);
   if(seq!==locSeq)return;
   const[aq,wd,rd]=res.map(r=>r.status==='fulfilled');
@@ -564,6 +577,13 @@ async function relocate(lat,lng,label,isSheffield,bounds){
   updateNoiseChip();
   initNoiseTraffic();
   trafficDirty=true;heatDirty=true;
+  if(pendingState){
+    const ps=pendingState;pendingState=null;
+    if(ps.p&&POLLUTANTS[ps.p]&&POLLUTANTS[ps.p].avail)switchPol(ps.p);
+    if(ps.t!=null)setIdx(D.nowIdx+ps.t);
+    if(ps.c)openInfo(ps.c[0],ps.c[1]);
+  }
+  hashReady=true;writeHash();
 }
 
 /* ---------- search with suggestions (city / address / postcode) ---------- */
@@ -698,11 +718,11 @@ function daqiNow(){
   return m;
 }
 function daqiBand(d){return d<=3?'low':d<=6?'moderate':d<=9?'high':'very high';}
-function daqiAt(lat,lng){
+function daqiAt(lat,lng,hr=idx){
   let m=null;
   for(const p in DAQI_BP){
     if(!POLLUTANTS[p]||!POLLUTANTS[p].avail||!D.sens[p])continue;
-    const v=fieldAtPI(p,lat,lng,idx);if(v==null)continue;
+    const v=fieldAtPI(p,lat,lng,hr);if(v==null)continue;
     const b=DAQI_BP[p];let i=0;while(i<9&&v>b[i])i++;
     const d=i+1;if(m==null||d>m)m=d;
   }
@@ -929,7 +949,7 @@ function gridSample(x,y){if(!grid)return null;
   return lerp(lerp(a,b,fx),lerp(c,d,fx),fy);}
 let moveT=null;
 map.on('move zoom',()=>{if(moveT)return;moveT=setTimeout(()=>{moveT=null;
-  trafficDirty=true;heatDirty=true;refreshNoiseGrid();},140);});
+  trafficDirty=true;heatDirty=true;refreshNoiseGrid();writeHash();},140);});
 
 /* ---------- wind (always real, follows the timeline) ---------- */
 const wind={dir:225,spd:5};
@@ -1035,7 +1055,7 @@ function setIdx(i,toNow){
   live=idx===D.nowIdx;
   document.getElementById('liveBtn').classList.toggle('on',live);
   scrub.value=idx;updateWhen();applyWind();
-  heatDirty=true;updateHeader();if(clickPt)renderInfo();}
+  heatDirty=true;updateHeader();if(clickPt)renderInfo();writeHash();}
 function updateWhen(){
   if(!D.n)return;
   const t=D.times[idx];
@@ -1063,7 +1083,7 @@ function switchPol(p){
   document.querySelectorAll('#polTabs .tab').forEach(x=>x.classList.toggle('on',x.dataset.pol===p));
   document.getElementById('unit').textContent=POLLUTANTS[p].unit;
   document.getElementById('polName').textContent=POLLUTANTS[p].label;
-  heatDirty=true;updateHeader();if(clickPt)renderInfo();
+  heatDirty=true;updateHeader();if(clickPt){renderInfo();updateExposure();}writeHash();
 }
 function renderTabs(){
   const box=document.getElementById('polTabs');
@@ -1084,15 +1104,16 @@ function openInfo(lat,lng){
   document.getElementById('iWhere').textContent='Locating…';
   document.getElementById('iCoord').textContent=lat.toFixed(4)+', '+lng.toFixed(4);
   infoEl.classList.add('show');infoEl.scrollTop=0;
-  renderInfo();
+  renderInfo();updateExposure();
   reverseName(lat,lng,seq);
   const nb=document.getElementById('iNoise');
   if(layers.noise&&inEngland(lat,lng)){
     nb.style.display='flex';nb.querySelector('.nv').textContent='…';
     queryNoiseInto(lat,lng,seq);
   }else nb.style.display='none';
+  writeHash();
 }
-function closeInfo(){clickPt=null;const el=document.getElementById('info');if(el)el.classList.remove('show');}
+function closeInfo(){clickPt=null;const el=document.getElementById('info');if(el)el.classList.remove('show');writeHash();}
 document.getElementById('infoClose').addEventListener('click',closeInfo);
 
 function renderInfo(){
@@ -1255,9 +1276,87 @@ function updateHeader(){
 document.getElementById('eaqi').addEventListener('click',()=>{
   idxMode=idxMode==='daqi'?'eaqi':'daqi';updateHeader();});
 
+/* ---------- exposure stat · CSV export · shareable permalink ---------- */
+const WHO_GUIDE={pm25:15,pm10:45,no2:25,o3:100,so2:40,co:4000}; // µg/m³ (CO as µg/m³)
+function tLabel(i){const t=D.times[i];if(!t)return'';
+  const d=new Date(t.length<=16?t+':00':t);
+  return d.toLocaleDateString('en-GB',{day:'numeric',month:'short'})+' '+t.slice(11,16);}
+
+function updateExposure(){
+  const el=document.getElementById('iStat');
+  if(!clickPt||!D.n){el.style.display='none';return;}
+  const{lat,lng}=clickPt,thr=WHO_GUIDE[pol];
+  if(!thr){el.style.display='none';return;}
+  let over=0,tot=0,peak=-1,peakI=0;
+  for(let k=0;k<=D.nowIdx;k++){const v=fieldAtPI(pol,lat,lng,k);
+    if(v>peak){peak=v;peakI=k;}if(v>thr)over++;tot++;}
+  const pct=tot?Math.round(over/tot*100):0,days=Math.round(tot/24);
+  el.style.display='block';
+  el.innerHTML=`exposure · last ${days} d<br>`+
+    `<b>${over}</b> of ${tot} h over WHO ${thr} ${POLLUTANTS[pol].unit} (${pct}%)<br>`+
+    `peak <b>${peak.toFixed(pol==='co'?0:1)}</b> · ${tLabel(peakI)}`;
+}
+
+function download(text,name,type){
+  const b=new Blob([text],{type});const u=URL.createObjectURL(b);
+  const a=document.createElement('a');a.href=u;a.download=name;
+  document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(u),1500);}
+function exportCSV(){
+  if(!clickPt||!D.n){toast('Click a spot on the map first');return;}
+  const{lat,lng}=clickPt;
+  const cols=Object.keys(POLLUTANTS).filter(p=>POLLUTANTS[p].avail);
+  let csv='# Airscape export · '+lat.toFixed(5)+','+lng.toFixed(5)+
+    ' · CAMS model estimate (not sensor data) · generated '+new Date().toISOString()+'\n';
+  csv+='time,'+cols.join(',')+',daqi,is_forecast\n';
+  for(let k=0;k<D.n;k++){
+    const row=[D.times[k]];
+    cols.forEach(p=>row.push(fieldAtPI(p,lat,lng,k).toFixed(2)));
+    const d=daqiAt(lat,lng,k);row.push(d==null?'':d);
+    row.push(k>D.nowIdx?1:0);
+    csv+=row.join(',')+'\n';
+  }
+  download(csv,`airscape_${lat.toFixed(4)}_${lng.toFixed(4)}.csv`,'text/csv');
+  toast('CSV downloaded · '+D.n+' hours');
+}
+
+function writeHash(force){
+  if((!hashReady&&!force)||typeof map==='undefined')return;
+  try{
+    const c=map.getCenter(),z=map.getZoom();
+    let h='#lat='+c.lat.toFixed(4)+'&lng='+c.lng.toFixed(4)+'&z='+z+'&p='+pol;
+    if(D.n)h+='&t='+(idx-D.nowIdx);
+    if(clickPt)h+='&c='+clickPt.lat.toFixed(4)+','+clickPt.lng.toFixed(4);
+    history.replaceState(null,'',h);
+  }catch(e){/* file:// or restricted history — ignore */}
+}
+function readHash(){
+  const h=location.hash.replace(/^#/,'');if(!h)return null;
+  const q={};h.split('&').forEach(kv=>{const i=kv.indexOf('=');
+    if(i>0)q[kv.slice(0,i)]=decodeURIComponent(kv.slice(i+1));});
+  if(q.lat==null||q.lng==null)return null;
+  const st={lat:+q.lat,lng:+q.lng,z:q.z?+q.z:null,p:q.p||null,
+    t:(q.t!=null&&q.t!=='')?parseInt(q.t,10):null,c:null};
+  if(q.c){const[a,b]=q.c.split(',');if(a&&b)st.c=[+a,+b];}
+  return (isFinite(st.lat)&&isFinite(st.lng))?st:null;
+}
+function copyLink(){
+  writeHash(true);const url=location.href;
+  if(navigator.clipboard&&navigator.clipboard.writeText)
+    navigator.clipboard.writeText(url).then(()=>toast('Link copied to clipboard'),
+      ()=>toast('Couldn\u2019t copy automatically'));
+  else toast('Copy not supported in this browser');
+}
+document.getElementById('iCsv').addEventListener('click',exportCSV);
+document.getElementById('iLink').addEventListener('click',copyLink);
+
 /* ---------- boot + 15-minute rolling refresh ---------- */
 renderTabs();
-relocate(CENTER[0],CENTER[1],'Sheffield',true);
+const _hs=readHash();
+if(_hs){
+  pendingState={p:_hs.p,t:_hs.t,c:_hs.c};
+  relocate(_hs.lat,_hs.lng,'Shared location',false,null,_hs.z);
+}else relocate(CENTER[0],CENTER[1],'Sheffield',true);
 setInterval(async()=>{
   if(!D.ok)return;
   const seq=locSeq;
