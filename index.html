@@ -161,6 +161,17 @@
     background:rgba(255,255,255,.02);transition:all .2s}
   .info .acts button:hover{color:var(--ink);border-color:var(--steel)}
 
+  .sensorpop{position:fixed;z-index:640;display:none;width:202px;background:var(--panel);
+    border:1px solid var(--line);border-radius:12px;padding:11px 12px;backdrop-filter:blur(12px);
+    box-shadow:0 12px 36px rgba(0,0,0,.45);font-family:"IBM Plex Mono",monospace}
+  .sensorpop .sp-h{font-size:11px;letter-spacing:.04em;margin-bottom:7px;color:var(--ink)}
+  .sensorpop .sp-h span{color:var(--ink-dim)}
+  .sensorpop .sp-row{display:flex;justify-content:space-between;gap:10px;font-size:11px;
+    padding:2px 0;color:var(--ink-dim)}
+  .sensorpop .sp-row b{color:var(--ink);font-weight:500}
+  .sensorpop .sp-foot{margin-top:7px;padding-top:7px;border-top:1px solid var(--line);
+    font-size:8.5px;color:var(--ink-dim);line-height:1.5}
+
   .probe{position:fixed;z-index:650;pointer-events:none;display:none;transform:translate(-50%,-130%);
     background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:5px 9px;
     font-family:"IBM Plex Mono",monospace;font-size:10.5px;backdrop-filter:blur(8px);white-space:nowrap}
@@ -281,6 +292,7 @@
     <button class="chip on" data-layer="haze">∴ haze</button>
     <button class="chip" id="hazeMode" title="Haze intensity">✦ calm</button>
     <button class="chip on" data-layer="roads">— roads</button>
+    <button class="chip" id="sensorChip" title="Live low-cost community sensors">◉ sensors</button>
     <button class="chip" data-layer="noise" id="noiseChip" style="display:none">♪ noise</button>
   </div>
   <div class="legend"><span>cleaner</span><div class="ramp"></div><span>more polluted</span></div>
@@ -294,6 +306,7 @@
 </div>
 
 <div class="probe" id="probe"></div>
+<div class="sensorpop" id="sensorPop"></div>
 <div class="toast" id="toast"></div>
 
 <!-- ============ GUIDE ============ -->
@@ -311,7 +324,7 @@
   <div class="ctrl"><b>∴ haze</b><span>Drifting particles carried by the real recorded wind for the hour you're viewing. Each particle samples the pollution where it sits, and its size, colour and brightness all track that reading — clean air is a faint teal mist, dirty air swells into bold, glowing dots that streak with the wind.</span></div>
   <div class="ctrl"><b>✦ calm / vivid</b><span>Sets how bold the haze is. <em>Calm</em> keeps clean air as quiet points and reserves the glow for genuinely high readings; <em>vivid</em> turns the drama up across the board. Tap to switch.</span></div>
   <div class="ctrl"><b>— roads</b><span>Major roads from OpenStreetMap, weighted as emission corridors that shape the hotspots — strongly for NO₂, mildly for particles. In England the weighting is derived from Defra's modelled road-noise levels, which track real traffic intensity; elsewhere it falls back to road class.</span></div>
-  <div class="ctrl"><b>♪ noise</b><span>England only. The official Defra strategic road-noise map (Round 4, modelled 2022): annual-average noise bands in decibels drawn along roads, on a 10&nbsp;m grid. While it's on, tap anywhere on the map to read the decibel value at that spot. This is a long-term statutory model, not live sound. Clearest with the heatmap turned off.</span></div>
+  <div class="ctrl"><b>◉ sensors</b><span>Live readings from nearby <em>low-cost community sensors</em> (the Sensor.Community citizen network) within ~10&nbsp;km, shown as white-ringed dots coloured by their measured fine particles. Tap one to compare its reading against the CAMS model estimate at that exact spot, with the model's bias as a percentage — a quick reality-check on the map. These are uncalibrated citizen nodes, not reference-grade monitors, so individual values can be noisy; the value is in spotting where the model and the ground disagree. Coverage varies by area and some places have none.</span></div>
 
   <h3>The controls</h3>
   <div class="ctrl"><b>search</b><span>Type a city, street address or postcode. Pick from the suggestions and the map flies there at the closest zoom available, fetching fresh data for that area.</span></div>
@@ -364,7 +377,7 @@
   <p>The window is live and rolling: each visit loads the most recent 31 days plus a 4-day forecast, and while the page is open the present edge refreshes every 15 minutes. It is never a frozen snapshot. Forecast hours are model predictions and carry more uncertainty the further ahead you look.</p>
 
   <h3 id="g-sources">Data sources</h3>
-  <p>Air quality &amp; forecast: CAMS via the Open-Meteo air-quality API (hourly). Wind: Open-Meteo, real recorded and forecast values. Basemap &amp; roads: OpenStreetMap contributors, dark style by CARTO. Geocoding: Nominatim. Road noise (England): Defra strategic noise mapping Round 4, © Department for Environment, Food &amp; Rural Affairs 2023, used under the Open Government Licence. In Europe, CAMS additionally provides the EAQI index and pollen, which appear automatically where available.</p>
+  <p>Air quality &amp; forecast: CAMS via the Open-Meteo air-quality API (hourly). Wind: Open-Meteo, real recorded and forecast values. Live low-cost sensor readings: the Sensor.Community open citizen network (uncalibrated, outdoor nodes only). Basemap &amp; roads: OpenStreetMap contributors, dark style by CARTO. Geocoding: Nominatim. Road noise (England): Defra strategic noise mapping Round 4, © Department for Environment, Food &amp; Rural Affairs 2023, used under the Open Government Licence. In Europe, CAMS additionally provides the EAQI index and pollen, which appear automatically where available.</p>
   <p>In England, road emission weighting is derived from Defra's modelled road-noise levels (Round 4), which closely track real traffic intensity. Elsewhere it is an approximation based on road class. In both cases hotspot shapes near roads are indicative, not measured.</p>
 
   <h3>About</h3>
@@ -450,6 +463,7 @@ const D={ok:false,times:[],sens:{},eaqi:null,wind:{spd:[],dir:[]},n:0,nowIdx:0,o
 let idx=0,live=true;
 let clickPt=null,feedNote='',trafficNote='road class';
 let pendingState=null,hashReady=false;
+let sensorsOn=false,sensorData=[];
 
 function computeNowIdx(){
   const nowLocal=Date.now()+D.offset*1000;
@@ -547,6 +561,7 @@ async function relocate(lat,lng,label,isSheffield,bounds,zoom){
   CENTER=[lat,lng];
   SENSORS=makeGrid(lat,lng);
   closeInfo();roadsReady=false;ROADS=[];SOURCES=[];
+  sensorData=[];hideSensorPop();
   D.ok=false;D.n=0;grid=null;trafficGrid=null;
   document.getElementById('placeName').textContent=label;
   document.getElementById('feedTxt').textContent='· connecting';
@@ -584,6 +599,7 @@ async function relocate(lat,lng,label,isSheffield,bounds,zoom){
     if(ps.c)openInfo(ps.c[0],ps.c[1]);
   }
   hashReady=true;writeHash();
+  if(sensorsOn)loadSensors();
 }
 
 /* ---------- search with suggestions (city / address / postcode) ---------- */
@@ -948,7 +964,7 @@ function gridSample(x,y){if(!grid)return null;
   const a=grid[y0*GW+x0],b=grid[y0*GW+x0+1]??a,c=grid[(y0+1)*GW+x0]??a,d=grid[(y0+1)*GW+x0+1]??a;
   return lerp(lerp(a,b,fx),lerp(c,d,fx),fy);}
 let moveT=null;
-map.on('move zoom',()=>{if(moveT)return;moveT=setTimeout(()=>{moveT=null;
+map.on('move zoom',()=>{hideSensorPop();if(moveT)return;moveT=setTimeout(()=>{moveT=null;
   trafficDirty=true;heatDirty=true;refreshNoiseGrid();writeHash();},140);});
 
 /* ---------- wind (always real, follows the timeline) ---------- */
@@ -1043,6 +1059,20 @@ function frame(now){
       actx.moveTo(X+Math.cos(rad)*r0,Y+Math.sin(rad)*r0);
       actx.lineTo(X+Math.cos(rad)*r1,Y+Math.sin(rad)*r1);actx.stroke();}
   }
+  // live low-cost sensors: white-ringed dots coloured by measured PM
+  if(sensorsOn&&sensorData.length&&D.n){
+    for(const s of sensorData){
+      const pt=map.latLngToContainerPoint([s.lat,s.lng]);
+      if(pt.x<-12||pt.x>innerWidth+12||pt.y<-12||pt.y>innerHeight+12)continue;
+      const mv=s.pm25!=null?s.pm25:s.pm10,c=rampColorP('pm25',mv);
+      const X=pt.x*DPR,Y=pt.y*DPR;
+      actx.beginPath();actx.arc(X,Y,5.5*DPR,0,7);
+      actx.fillStyle=`rgb(${c[0]|0},${c[1]|0},${c[2]|0})`;actx.fill();
+      actx.lineWidth=2*DPR;actx.strokeStyle='rgba(245,247,250,0.95)';actx.stroke();
+      actx.lineWidth=1*DPR;actx.strokeStyle='rgba(13,17,21,0.6)';
+      actx.beginPath();actx.arc(X,Y,6.5*DPR,0,7);actx.stroke();
+    }
+  }
   requestAnimationFrame(frame);
 }
 
@@ -1096,7 +1126,18 @@ function renderTabs(){
 /* click anywhere → pin that spot and open the readout */
 let infoSeq=0;
 const infoEl=document.getElementById('info');
-map.on('click',e=>openInfo(e.latlng.lat,e.latlng.lng));
+map.on('click',e=>{
+  if(sensorsOn&&sensorData.length){
+    const cp=e.containerPoint;let hit=null,best=18;
+    for(const s of sensorData){
+      const pt=map.latLngToContainerPoint([s.lat,s.lng]);
+      const d=Math.hypot(pt.x-cp.x,pt.y-cp.y);
+      if(d<best){best=d;hit=s;}}
+    if(hit){showSensorPop(hit,cp);return;}
+  }
+  hideSensorPop();
+  openInfo(e.latlng.lat,e.latlng.lng);
+});
 
 function openInfo(lat,lng){
   clickPt={lat,lng};
@@ -1349,6 +1390,67 @@ function copyLink(){
 }
 document.getElementById('iCsv').addEventListener('click',exportCSV);
 document.getElementById('iLink').addEventListener('click',copyLink);
+
+/* ---------- live low-cost sensor overlay (Sensor.Community) ---------- */
+async function loadSensors(){
+  const[lat,lng]=CENTER,seq=locSeq;
+  toast('Loading live sensors…');
+  try{
+    const u=`https://data.sensor.community/airrohr/v1/filter/area=${lat.toFixed(4)},${lng.toFixed(4)},10`;
+    const r=await fetch(u);if(!r.ok)throw 0;
+    const j=await r.json();
+    if(!sensorsOn||seq!==locSeq)return;
+    const byId={};
+    for(const m of (Array.isArray(j)?j:[])){
+      const loc=m.location;if(!loc||+loc.indoor===1)continue;
+      const la=+loc.latitude,lo=+loc.longitude;
+      if(!isFinite(la)||!isFinite(lo))continue;
+      const vals={};(m.sensordatavalues||[]).forEach(v=>vals[v.value_type]=parseFloat(v.value));
+      let pm25=vals.P2,pm10=vals.P1;
+      if(pm25!=null&&(pm25<0||pm25>1000))pm25=null;
+      if(pm10!=null&&(pm10<0||pm10>2000))pm10=null;
+      if(pm25==null&&pm10==null)continue;
+      const id=m.sensor&&m.sensor.id;if(id==null)continue;
+      const prev=byId[id];
+      if(!prev||(m.timestamp||'')>prev.timestamp)
+        byId[id]={id,lat:la,lng:lo,pm25,pm10,timestamp:m.timestamp||''};
+    }
+    let arr=Object.values(byId);
+    arr.forEach(s=>s.d=(s.lat-lat)*(s.lat-lat)+(s.lng-lng)*(s.lng-lng));
+    arr.sort((a,b)=>a.d-b.d);
+    sensorData=arr.slice(0,200);
+    toast(sensorData.length?`${sensorData.length} live sensors within ~10 km`:'No outdoor sensors within ~10 km');
+  }catch(e){
+    if(sensorsOn)toast('Live sensor data unavailable here (network/CORS).');
+  }
+}
+function showSensorPop(s,cp){
+  const model=fieldAtPI('pm25',s.lat,s.lng,idx);
+  const meas=s.pm25!=null?s.pm25:s.pm10;
+  const which=s.pm25!=null?'PM2.5':'PM10';
+  const bias=meas>0?Math.round((model-meas)/meas*100):0;
+  const t=(s.timestamp||'').replace('T',' ').slice(11,16);
+  const el=document.getElementById('sensorPop');
+  el.innerHTML=`<div class="sp-h">Low-cost sensor <span>#${s.id}</span></div>`+
+    `<div class="sp-row"><span>${which} measured</span><b>${meas.toFixed(1)}</b></div>`+
+    `<div class="sp-row"><span>CAMS model here</span><b>${model.toFixed(1)}</b></div>`+
+    `<div class="sp-row"><span>model vs sensor</span><b style="color:${bias>=0?'var(--amber)':'var(--steel)'}">${bias>=0?'+':''}${bias}%</b></div>`+
+    `<div class="sp-foot">µg/m³ · uncalibrated citizen node · ${t||'recent'}</div>`;
+  el.style.display='block';
+  const pad=12,w=el.offsetWidth||202,h=el.offsetHeight||120;
+  let x=cp.x+14,y=cp.y-10;
+  if(x+w>innerWidth-pad)x=cp.x-w-14;
+  if(x<pad)x=pad;
+  if(y+h>innerHeight-pad)y=innerHeight-h-pad;
+  if(y<pad)y=pad;
+  el.style.left=x+'px';el.style.top=y+'px';
+}
+function hideSensorPop(){const el=document.getElementById('sensorPop');if(el)el.style.display='none';}
+document.getElementById('sensorChip').addEventListener('click',e=>{
+  sensorsOn=!sensorsOn;e.target.classList.toggle('on',sensorsOn);
+  if(sensorsOn)loadSensors();
+  else{sensorData=[];hideSensorPop();}
+});
 
 /* ---------- boot + 15-minute rolling refresh ---------- */
 renderTabs();
