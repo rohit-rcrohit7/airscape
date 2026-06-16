@@ -267,6 +267,7 @@
   <div class="tabs">
     <button class="chip on" data-layer="heatmap">▦ heatmap</button>
     <button class="chip on" data-layer="haze">∴ haze</button>
+    <button class="chip" id="hazeMode" title="Haze intensity">✦ calm</button>
     <button class="chip on" data-layer="roads">— roads</button>
     <button class="chip" data-layer="noise" id="noiseChip" style="display:none">♪ noise</button>
   </div>
@@ -723,8 +724,21 @@ resize();addEventListener('resize',resize);
 const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const layers={heatmap:true,haze:true,roads:true,noise:false};
-document.querySelectorAll('.chip').forEach(c=>c.addEventListener('click',()=>{
+document.querySelectorAll('.chip[data-layer]').forEach(c=>c.addEventListener('click',()=>{
   layers[c.dataset.layer]=!layers[c.dataset.layer];c.classList.toggle('on');heatDirty=true;}));
+
+/* haze intensity presets — drama is back-loaded onto pollution, and the
+   high end is capped so dense readings don't blow out into a mass of dots */
+const HAZE={
+  calm: {n:650, rFloor:1.2,rGain:3.2,aBase:0.26,aSlope:0.50,glowGate:0.34,glowK:0.30,glowR:1.9},
+  vivid:{n:1050,rFloor:1.4,rGain:4.4,aBase:0.34,aSlope:0.55,glowGate:0.24,glowK:0.40,glowR:2.3},
+};
+let hazeMode='calm';
+document.getElementById('hazeMode').addEventListener('click',e=>{
+  hazeMode=hazeMode==='calm'?'vivid':'calm';
+  e.target.textContent='✦ '+hazeMode;
+  e.target.classList.toggle('on',hazeMode==='vivid');
+});
 
 /* ---------- England road-noise overlay ----------
    Defra strategic noise mapping, Round 4 (modelled 2022),
@@ -928,12 +942,12 @@ function applyWind(){if(!D.wind.spd.length)return;
     `translate(-50%,0) rotate(${(wind.dir+180)%360}deg)`;}
 
 /* ---------- particles ---------- */
-const parts=[];const MAXP=1300;
+const parts=[];const MAXP=1050;
 function padB(b){const dy=(b.getNorth()-b.getSouth())*0.2,dx=(b.getEast()-b.getWest())*0.2;
   return{s:b.getSouth()-dy,n:b.getNorth()+dy,w:b.getWest()-dx,e:b.getEast()+dx};}
 function spawn(p){const b=padB(map.getBounds());
   p.lat=b.s+Math.random()*(b.n-b.s);p.lng=b.w+Math.random()*(b.e-b.w);
-  p.life=140+Math.random()*260;}
+  p.life=140+Math.random()*260;p.px=null;p.py=null;}
 for(let i=0;i<MAXP;i++){const p={};spawn(p);p.life*=Math.random();parts.push(p);}
 
 let last=performance.now();
@@ -947,21 +961,48 @@ function frame(now){
     const slow=reduceMotion?0.25:1;
     const b=padB(map.getBounds());
     const base=wind.spd*5.4e-7*dt*slow;
-    for(const p of parts){
+    actx.globalCompositeOperation='lighter';   // additive: hotspots bloom
+    actx.lineCap='round';
+    const maxJump=46*DPR;
+    const hz=HAZE[hazeMode];
+    for(let i=0;i<hz.n;i++){
+      const p=parts[i];
       const pt=map.latLngToContainerPoint([p.lat,p.lng]);
       const v=gridSample(pt.x,pt.y)??POLLUTANTS[pol].dom[0];
       const t=norm(v);
+      const onScreen=!(pt.x<-12||pt.x>innerWidth+12||pt.y<-12||pt.y>innerHeight+12);
+      if(onScreen){
+        const c=rampColor(v),col=`${c[0]|0},${c[1]|0},${c[2]|0}`;
+        const X=pt.x*DPR,Y=pt.y*DPR;
+        const ts=Math.pow(t,0.6);                  // lift low values so faint fields still read
+        const r=(hz.rFloor+ts*hz.rGain)*DPR;       // grows with pollution, capped at the top
+        const a=hz.aBase+t*hz.aSlope;              // brightness tracks level
+        if(!reduceMotion&&p.px!=null){             // wind-driven streak
+          const dx=X-p.px,dy=Y-p.py,d2=dx*dx+dy*dy;
+          if(d2>0.3&&d2<maxJump*maxJump){
+            actx.strokeStyle=`rgba(${col},${a*0.45})`;
+            actx.lineWidth=r*0.85;
+            actx.beginPath();actx.moveTo(p.px,p.py);actx.lineTo(X,Y);actx.stroke();
+          }
+        }
+        if(t>hz.glowGate){                         // glow reserved for actual pollution
+          actx.fillStyle=`rgba(${col},${(t-hz.glowGate)*hz.glowK})`;
+          actx.beginPath();actx.arc(X,Y,r*hz.glowR,0,7);actx.fill();}
+        actx.fillStyle=`rgba(${col},${a})`;        // crisp core
+        actx.beginPath();actx.arc(X,Y,r,0,7);actx.fill();
+        if(t>0.86){                                // sparkle on extreme pollution
+          actx.fillStyle=`rgba(255,236,210,${(t-0.86)*2.2})`;
+          actx.beginPath();actx.arc(X,Y,r*0.4,0,7);actx.fill();}
+        p.px=X;p.py=Y;
+      }else p.px=null;
       const turb=(Math.random()-0.5)*t*2.0;
       const ca=Math.cos(turb),sa=Math.sin(turb);
       const ex=ux*ca-uy*sa,ny=ux*sa+uy*ca;
       const sp=base*(0.5+t*1.3)+9e-8*dt;
       p.lng+=ex*sp*1.7;p.lat+=ny*sp;p.life-=dt*0.06;
-      if(p.life<=0||p.lat<b.s||p.lat>b.n||p.lng<b.w||p.lng>b.e){spawn(p);continue;}
-      if(pt.x<-10||pt.x>innerWidth+10||pt.y<-10||pt.y>innerHeight+10)continue;
-      const c=rampColor(v);
-      actx.fillStyle=`rgba(${c[0]|0},${c[1]|0},${c[2]|0},${0.30+t*0.5})`;
-      actx.fillRect(pt.x*DPR,pt.y*DPR,(1.7+t*2.6)*DPR,(1.7+t*2.6)*DPR);
+      if(p.life<=0||p.lat<b.s||p.lat>b.n||p.lng<b.w||p.lng>b.e)spawn(p);
     }
+    actx.globalCompositeOperation='source-over';
   }
   // pinned click point: a crosshair marker coloured by the current value
   if(clickPt&&D.n){
