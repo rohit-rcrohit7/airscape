@@ -292,11 +292,12 @@
 
   <h3 id="g-about">What you're looking at</h3>
   <p>Airscape turns hourly air-quality data into a moving picture of the atmosphere over any place on Earth. Pollution shows as colour and movement: cool teal means cleaner air, shifting through amber to deep red as levels rise.</p>
-  <p>Values come from CAMS, the Copernicus Atmosphere Monitoring Service operated for the EU. It is a scientific model that assimilates satellite and ground observations, sampled here at several points around your chosen location and blended into a continuous surface. Model values can differ from individual street-level monitors, especially right next to a busy road.</p>
+  <p>Values come from CAMS, the Copernicus Atmosphere Monitoring Service operated for the EU — a scientific model that assimilates satellite and ground observations. Airscape samples it on a regular grid across the area you're viewing and reconstructs a continuous surface between those points by interpolation. Because CAMS is a model (resolving detail down to roughly 11&nbsp;km), its values can differ from individual street-level monitors, especially right next to a busy road.</p>
 
   <h3>The layers</h3>
-  <div class="ctrl"><b>▦ heatmap</b><span>A smooth colour surface showing estimated concentration everywhere on screen, including hotspots between sampling points.</span></div>
-  <div class="ctrl"><b>∴ haze</b><span>Drifting particles. Their direction and speed follow the real recorded wind for the hour you are viewing; their density, colour and turbulence follow pollution levels.</span></div>
+  <div class="ctrl"><b>▦ heatmap</b><span>A smooth colour surface showing estimated concentration everywhere on screen, including the road hotspots that fall between the sampled grid points.</span></div>
+  <div class="ctrl"><b>∴ haze</b><span>Drifting particles carried by the real recorded wind for the hour you're viewing. Each particle samples the pollution where it sits, and its size, colour and brightness all track that reading — clean air is a faint teal mist, dirty air swells into bold, glowing dots that streak with the wind.</span></div>
+  <div class="ctrl"><b>✦ calm / vivid</b><span>Sets how bold the haze is. <em>Calm</em> keeps clean air as quiet points and reserves the glow for genuinely high readings; <em>vivid</em> turns the drama up across the board. Tap to switch.</span></div>
   <div class="ctrl"><b>— roads</b><span>Major roads from OpenStreetMap, weighted as emission corridors that shape the hotspots — strongly for NO₂, mildly for particles. In England the weighting is derived from Defra's modelled road-noise levels, which track real traffic intensity; elsewhere it falls back to road class.</span></div>
   <div class="ctrl"><b>♪ noise</b><span>England only. The official Defra strategic road-noise map (Round 4, modelled 2022): annual-average noise bands in decibels drawn along roads, on a 10&nbsp;m grid. While it's on, tap anywhere on the map to read the decibel value at that spot. This is a long-term statutory model, not live sound. Clearest with the heatmap turned off.</span></div>
 
