@@ -375,24 +375,41 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
   attribution:'Airscape by <a href="mailto:rcrohit7@gmail.com">Rohit Chakraborty</a> · © OpenStreetMap contributors © CARTO · air: CAMS/Open-Meteo',
   subdomains:'abcd',maxZoom:19}).addTo(map);
 
-/* ---------- sampling sites ---------- */
-const SHEFFIELD_SITES=[
-  {id:'tinsley',  name:'Tinsley',          where:'M1 Junction 34 · roadside', lat:53.4112, lng:-1.4032},
-  {id:'wicker',   name:'The Wicker',       where:'Inner city', lat:53.3878, lng:-1.4626},
-  {id:'firshill', name:'Firs Hill',        where:'Residential north', lat:53.3990, lng:-1.4570},
-  {id:'devgreen', name:'Devonshire Green', where:'City centre', lat:53.3792, lng:-1.4778},
-  {id:'lowfield', name:'Lowfield',         where:'London Rd corridor', lat:53.3622, lng:-1.4775},
-  {id:'ecclesall',name:'Ecclesall Rd',     where:'Suburban southwest', lat:53.3672, lng:-1.4946},
-];
-let SENSORS=SHEFFIELD_SITES;
-const BRG=['N','NE','SE','S','SW','NW'];
-function makeSites(lat,lng){
-  const sites=[{id:'centre',name:'Centre',where:'Sample point · centre',lat,lng}];
-  const r=0.020,ls=1/Math.cos(lat*Math.PI/180);
-  BRG.forEach((b,i)=>{const a=i*60*Math.PI/180;
-    sites.push({id:'p'+i,name:b+' · 2.2 km',where:'Sample point · '+b,
-      lat:lat+r*Math.cos(a),lng:lng+r*Math.sin(a)*ls*0.9});});
-  return sites;
+/* ---------- sampling grid ----------
+   Airscape samples CAMS on a regular lattice across the area and
+   reconstructs the field by bilinear interpolation. CAMS resolves
+   at ~11 km, so a lattice finer than that captures the true field
+   without the artefacts of a sparse hand-placed point set.       */
+const GRIDN=5;            // GRIDN × GRIDN lattice (25 points)
+const HALF_LAT=0.075;     // ~8.3 km half-span N–S; E–W cos-corrected
+let SAMPLE=null;          // {lat0,lng0,dLat,dLng,n} set by makeGrid
+const gid=(r,c)=>'n'+r+'_'+c;
+function makeGrid(lat,lng){
+  const ls=1/Math.cos(lat*Math.PI/180);
+  const halfLng=HALF_LAT*ls;
+  const lat0=lat-HALF_LAT, lng0=lng-halfLng;
+  const dLat=(2*HALF_LAT)/(GRIDN-1), dLng=(2*halfLng)/(GRIDN-1);
+  SAMPLE={lat0,lng0,dLat,dLng,n:GRIDN};
+  const nodes=[];
+  for(let r=0;r<GRIDN;r++)for(let c=0;c<GRIDN;c++)
+    nodes.push({id:gid(r,c),lat:lat0+r*dLat,lng:lng0+c*dLng});
+  return nodes;
+}
+let SENSORS=makeGrid(CENTER[0],CENTER[1]);
+const centerNodeIdx=()=>{const m=Math.floor(GRIDN/2);return m*GRIDN+m;};
+
+/* bilinear sample of the CAMS lattice for pollutant p at time i */
+function bilinear(p,lat,lng,i){
+  const S=SAMPLE;if(!S)return 0;
+  let fr=(lat-S.lat0)/S.dLat, fc=(lng-S.lng0)/S.dLng;
+  fr=Math.max(0,Math.min(S.n-1,fr));fc=Math.max(0,Math.min(S.n-1,fc));
+  const r0=Math.max(0,Math.min(S.n-2,Math.floor(fr)));
+  const c0=Math.max(0,Math.min(S.n-2,Math.floor(fc)));
+  const tr=fr-r0, tc=fc-c0;
+  const v00=val(p,gid(r0,c0),i),   v01=val(p,gid(r0,c0+1),i),
+        v10=val(p,gid(r0+1,c0),i), v11=val(p,gid(r0+1,c0+1),i);
+  const top=v00*(1-tc)+v01*tc, bot=v10*(1-tc)+v11*tc;
+  return top*(1-tr)+bot*tr;
 }
 
 /* ---------- pollutants ---------- */
@@ -443,6 +460,8 @@ async function loadAQ(){
     POLLUTANTS[p].avail=D.sens[p][SENSORS[0].id].some(v=>v!=null);
   }
   D.eaqi=j[0].hourly.european_aqi?j[0].hourly.european_aqi.slice(0,n):null;
+  if(D.eaqi){const ci=Math.min(centerNodeIdx(),j.length-1);
+    if(j[ci]&&j[ci].hourly.european_aqi)D.eaqi=j[ci].hourly.european_aqi.slice(0,n);}
   if(D.eaqi&&!D.eaqi.some(v=>v!=null))D.eaqi=null;
   D.n=n;computeNowIdx();
 }
@@ -511,7 +530,7 @@ async function relocate(lat,lng,label,isSheffield,bounds){
   const seq=++locSeq;
   stopPlay();
   CENTER=[lat,lng];
-  SENSORS=isSheffield?SHEFFIELD_SITES:makeSites(lat,lng);
+  SENSORS=makeGrid(lat,lng);
   closeInfo();roadsReady=false;ROADS=[];SOURCES=[];
   D.ok=false;D.n=0;grid=null;trafficGrid=null;
   document.getElementById('placeName').textContent=label;
@@ -632,11 +651,7 @@ function trafficAt(lat,lng){let t=0;
     if(d2<SIG2*14)t+=s.w*gauss(d2,SIG2);}
   return Math.min(t,2.4);}
 function fieldAtPI(p,lat,lng,i){
-  let num=0,den=0;
-  for(const s of SENSORS){
-    const dx=(lng-s.lng)*0.6,dy=lat-s.lat,d2=dx*dx+dy*dy+1e-6;
-    const w=1/(d2*d2);num+=w*val(p,s.id,i);den+=w;}
-  let v=num/den;
+  let v=bilinear(p,lat,lng,i);
   const K=POLLUTANTS[p].trafficK;
   if(K){const nw=noiseWAt(lat,lng);
     if(nw!=null)v+=K*nw*2.0*rushFactor(i);
@@ -674,7 +689,7 @@ function daqiNow(){
   let m=null;
   for(const p in DAQI_BP){
     if(!POLLUTANTS[p]||!POLLUTANTS[p].avail||!D.sens[p])continue;
-    const v=val(p,SENSORS[0].id);if(v==null)continue;
+    const v=bilinear(p,CENTER[0],CENTER[1],idx);if(v==null)continue;
     const b=DAQI_BP[p];let i=0;while(i<9&&v>b[i])i++;
     const d=i+1;if(m==null||d>m)m=d;
   }
@@ -871,11 +886,7 @@ function renderHeat(){
   const K=POLLUTANTS[pol].trafficK,rf=D.n?rushFactor(idx):1;
   for(let gy=0;gy<GH;gy++)for(let gx=0;gx<GW;gx++){
     const ll=map.containerPointToLatLng([(gx+0.5)*12,(gy+0.5)*12]);
-    let num=0,den=0;
-    for(const s of SENSORS){
-      const dx=(ll.lng-s.lng)*0.6,dy=ll.lat-s.lat,d2=dx*dx+dy*dy+1e-6;
-      const w=1/(d2*d2);num+=w*val(pol,s.id);den+=w;}
-    let v=num/den;
+    let v=bilinear(pol,ll.lat,ll.lng,idx);
     if(K){const i2=gy*GW+gx;
       if(layers.noise&&noiseTraffic&&noiseWGrid)v+=K*noiseWGrid[i2]*2.0*rf;
       else if(trafficGrid&&roadsReady)v+=K*trafficGrid[i2]*rf;}
