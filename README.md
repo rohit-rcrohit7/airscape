@@ -40,7 +40,7 @@ Airscape turns hourly air-quality data into a moving picture of the atmosphere o
 
 ## How it works
 
-Airscape is a single self-contained HTML file — no build step, no backend, no API keys. Leaflet renders the basemap; two canvas layers on top render the heatmap surface and the particle field. Concentrations are sampled at several points around the chosen location, blended into a continuous field by inverse-distance interpolation, and shaped near roads by an emission weighting (road class by default; Defra noise-derived in England when the noise layer is on). The diurnal traffic cycle modulates road contributions through the day.
+Airscape is a single self-contained HTML file — no build step, no backend, no API keys. Leaflet renders the basemap; two canvas layers on top render the heatmap surface and the particle field. Concentrations are sampled from CAMS on a regular lattice across the area (finer than the model's native ~11 km resolution) and reconstructed into a continuous field by bilinear interpolation, then shaped near roads by an emission weighting (road class by default; Defra noise-derived in England when the noise layer is on). The diurnal traffic cycle modulates road contributions through the day.
 
 ## Data sources
 
